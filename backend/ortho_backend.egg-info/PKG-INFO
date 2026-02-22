@@ -1,0 +1,67 @@
+Metadata-Version: 2.4
+Name: ortho-backend
+Version: 0.1.0
+Summary: Agentic orthopedic backend powered by FastAPI, LangGraph, and MCP
+Requires-Python: <3.14,>=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi>=0.115.0
+Requires-Dist: uvicorn[standard]>=0.32.0
+Requires-Dist: python-multipart>=0.0.12
+Requires-Dist: langchain>=0.3.0
+Requires-Dist: langchain-core>=0.3.0
+Requires-Dist: langchain-groq>=0.2.0
+Requires-Dist: langchain-community>=0.3.0
+Requires-Dist: langgraph>=0.2.0
+Requires-Dist: langgraph-checkpoint>=2.0.0
+Requires-Dist: langsmith>=0.2.0
+Requires-Dist: mcp>=1.0.0
+Requires-Dist: groq>=0.11.0
+Requires-Dist: torch>=2.1.0
+Requires-Dist: torchvision>=0.16.0
+Requires-Dist: ultralytics>=8.3.0
+Requires-Dist: pillow>=10.0.0
+Requires-Dist: numpy>=1.26.0
+Requires-Dist: opencv-python-headless>=4.9.0
+Requires-Dist: reportlab>=4.2.0
+Requires-Dist: cloudinary>=1.41.0
+Requires-Dist: aiofiles>=24.1.0
+Requires-Dist: pydantic>=2.9.0
+Requires-Dist: pydantic-settings>=2.6.0
+Requires-Dist: python-dotenv>=1.0.0
+Requires-Dist: loguru>=0.7.0
+Requires-Dist: httpx>=0.27.0
+Requires-Dist: python-jose>=3.3.0
+Requires-Dist: passlib>=1.7.4
+
+# OrthoAssist Backend
+
+Backend scaffold for an agentic orthopedic assistant using FastAPI, LangGraph, LangSmith, and MCP.
+
+Supported Python version: `3.11` to `3.13`.
+
+## Quick Start
+
+```bash
+uv sync
+uvicorn main:app --reload --port 8000
+```
+
+Run MCP server (stdio):
+
+```bash
+python mcp/server.py
+```
+
+## API Endpoints
+
+- `GET /api/health`
+- `GET /api/metrics`
+- `POST /api/analyze`
+- `POST /api/chat`
+- `POST /api/reports`
+- `GET /api/reports/{report_id}`
+
+## Notes
+
+- Tool implementations are currently safe fallbacks and should be replaced with production model inference.
+- Set `GROQ_API_KEY` and LangSmith variables in `.env` before running agent flows.

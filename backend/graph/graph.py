@@ -1,0 +1,99 @@
+from __future__ import annotations
+
+from functools import lru_cache
+from uuid import uuid4
+
+from langchain_core.messages import HumanMessage
+from langgraph.graph import END, START, StateGraph
+
+from core.config import settings
+from core.exceptions import AgentExecutionError
+from graph.checkpointer import get_checkpointer
+from graph.nodes.error_handler import error_handler_node
+from graph.nodes.response_builder import response_builder_node
+from graph.nodes.supervisor import supervisor_node
+from graph.nodes.tool_executor import tool_executor_node
+from graph.state import AgentState, base_state
+from services.session import session_store
+
+
+def should_continue(state: AgentState) -> str:
+    if state.get("iteration_count", 0) >= settings.max_agent_iterations:
+        return "error_handler"
+    if state.get("error"):
+        return "error_handler"
+
+    messages = state.get("messages", [])
+    if not messages:
+        return "response_builder"
+
+    last_message = messages[-1]
+    if getattr(last_message, "tool_calls", None):
+        return "tool_executor"
+
+    return "response_builder"
+
+
+def error_handler_route(state: AgentState) -> str:
+    if state.get("final_response"):
+        return "response_builder"
+    if state.get("iteration_count", 0) >= settings.max_agent_iterations:
+        return "response_builder"
+    return "supervisor"
+
+
+@lru_cache(maxsize=1)
+def get_graph():
+    workflow = StateGraph(AgentState)
+    workflow.add_node("supervisor", supervisor_node)
+    workflow.add_node("tool_executor", tool_executor_node)
+    workflow.add_node("response_builder", response_builder_node)
+    workflow.add_node("error_handler", error_handler_node)
+
+    workflow.add_edge(START, "supervisor")
+    workflow.add_conditional_edges(
+        "supervisor",
+        should_continue,
+        {
+            "tool_executor": "tool_executor",
+            "response_builder": "response_builder",
+            "error_handler": "error_handler",
+        },
+    )
+    workflow.add_edge("tool_executor", "supervisor")
+    workflow.add_conditional_edges(
+        "error_handler",
+        error_handler_route,
+        {"supervisor": "supervisor", "response_builder": "response_builder"},
+    )
+    workflow.add_edge("response_builder", END)
+
+    return workflow.compile(checkpointer=get_checkpointer())
+
+
+async def run_agent(payload: dict) -> AgentState:
+    graph = get_graph()
+    state = base_state()
+    state.update(payload)
+
+    session_id = state.get("session_id") or str(uuid4())
+    user_message = state.get("user_message") or "Analyze the case with available context."
+
+    state["session_id"] = session_id
+    if not state.get("messages"):
+        state["messages"] = [HumanMessage(content=user_message)]
+
+    try:
+        result = await graph.ainvoke(state, config={"configurable": {"thread_id": session_id}})
+    except Exception as exc:
+        raise AgentExecutionError(str(exc)) from exc
+
+    session_store.set(
+        session_id,
+        {
+            "last_response": result.get("final_response"),
+            "updated_at": result.get("iteration_count", 0),
+        },
+    )
+
+    return result
