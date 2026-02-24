@@ -43,17 +43,24 @@ function MonthlyTrendChart({ data }: { data: DoctorDashboardData["monthlyCases"]
   });
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800">
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700/80 dark:bg-slate-900/70">
       <svg
         aria-label="Monthly total and critical trend"
         className="h-56 w-full"
         viewBox={`0 0 ${width} ${height + 34}`}
       >
-        <line stroke="#cbd5e1" strokeDasharray="5 6" x1={paddingX} x2={width - paddingX} y1={height} y2={height} />
+        <line
+          className="stroke-slate-300 dark:stroke-slate-600"
+          strokeDasharray="5 6"
+          x1={paddingX}
+          x2={width - paddingX}
+          y1={height}
+          y2={height}
+        />
         <polyline
           fill="none"
           points={buildPolyline(totalPoints)}
-          stroke="#4f5d95"
+          className="stroke-[#4f5d95] dark:stroke-[#7c8de0]"
           strokeLinecap="round"
           strokeLinejoin="round"
           strokeWidth="3.5"
@@ -61,7 +68,7 @@ function MonthlyTrendChart({ data }: { data: DoctorDashboardData["monthlyCases"]
         <polyline
           fill="none"
           points={buildPolyline(criticalPoints)}
-          stroke="#d99525"
+          className="stroke-[#d99525] dark:stroke-[#f0bf6a]"
           strokeLinecap="round"
           strokeLinejoin="round"
           strokeWidth="3"
@@ -69,10 +76,15 @@ function MonthlyTrendChart({ data }: { data: DoctorDashboardData["monthlyCases"]
 
         {totalPoints.map((point, index) => (
           <g key={`point-${data[index]?.month}`}>
-            <circle cx={point.x} cy={point.y} fill="#4f5d95" r="4.5" />
-            <circle cx={criticalPoints[index]?.x} cy={criticalPoints[index]?.y} fill="#d99525" r="4" />
+            <circle className="fill-[#4f5d95] dark:fill-[#7c8de0]" cx={point.x} cy={point.y} r="4.5" />
+            <circle
+              className="fill-[#d99525] dark:fill-[#f0bf6a]"
+              cx={criticalPoints[index]?.x}
+              cy={criticalPoints[index]?.y}
+              r="4"
+            />
             <text
-              fill="#64748b"
+              className="fill-slate-500 dark:fill-slate-400"
               fontSize="11"
               textAnchor="middle"
               x={point.x}
@@ -85,11 +97,11 @@ function MonthlyTrendChart({ data }: { data: DoctorDashboardData["monthlyCases"]
       </svg>
       <div className="mt-2 flex items-center gap-4 text-xs text-slate-600 dark:text-slate-300">
         <span className="inline-flex items-center gap-1">
-          <span className="h-2.5 w-2.5 rounded-full bg-[#4f5d95]" />
+          <span className="h-2.5 w-2.5 rounded-full bg-[#4f5d95] dark:bg-[#7c8de0]" />
           Total Cases
         </span>
         <span className="inline-flex items-center gap-1">
-          <span className="h-2.5 w-2.5 rounded-full bg-[#d99525]" />
+          <span className="h-2.5 w-2.5 rounded-full bg-[#d99525] dark:bg-[#f0bf6a]" />
           Critical
         </span>
       </div>
@@ -122,7 +134,7 @@ function TriageDonut({
       <ul className="space-y-2 text-sm">
         {data.map((item) => (
           <li
-            className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-800"
+            className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700/80 dark:bg-slate-900/70"
             key={item.level}
           >
             <span className="inline-flex items-center gap-2 font-medium text-slate-700 dark:text-slate-200">
@@ -148,7 +160,7 @@ function TurnaroundBars({
   const maxValue = Math.max(...data.map((item) => item.avgHours), 1);
 
   return (
-    <div className="grid grid-cols-4 items-end gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-800">
+    <div className="grid grid-cols-4 items-end gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 dark:border-slate-700/80 dark:bg-slate-900/70">
       {data.map((item) => {
         const height = `${Math.max((item.avgHours / maxValue) * 100, 8)}%`;
         return (
@@ -176,17 +188,17 @@ export function DoctorDashboardOverview({
   dataSourceLabel,
 }: DoctorDashboardOverviewProps) {
   return (
-    <main className="space-y-6 p-6">
+    <main className="space-y-6 p-6 text-slate-900 dark:text-slate-100">
       <section className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold text-slate-900 dark:text-slate-100">
+          <h1 className="text-3xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
             Doctor Operations Dashboard
           </h1>
-          <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
+          <p className="mt-1 text-sm font-medium text-slate-600 dark:text-slate-300">
             Visual overview of case load, triage mix, and reporting throughput.
           </p>
         </div>
-        <span className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
+        <span className="rounded-full border border-slate-300 bg-white px-3 py-1 text-xs font-semibold uppercase tracking-[0.14em] text-slate-600 dark:border-slate-700/80 dark:bg-slate-900/70 dark:text-slate-200">
           Data Mode: {dataSourceLabel}
         </span>
       </section>
@@ -194,22 +206,22 @@ export function DoctorDashboardOverview({
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {data.summary.map((item) => (
           <article
-            className="rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_22px_rgba(15,23,42,0.08)] dark:border-slate-700 dark:bg-slate-900 dark:shadow-[0_8px_22px_rgba(2,8,23,0.45)]"
+            className="rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_22px_rgba(15,23,42,0.08)] dark:border-slate-800 dark:bg-[linear-gradient(180deg,rgba(15,23,42,0.9),rgba(15,23,42,0.72))] dark:shadow-[0_8px_22px_rgba(2,8,23,0.45)]"
             key={item.label}
           >
-            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-400">
+            <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-500 dark:text-slate-300">
               {item.label}
             </p>
-            <p className="mt-3 text-3xl font-semibold text-slate-900 dark:text-slate-100">
+            <p className="mt-3 text-4xl font-semibold tracking-tight text-slate-900 dark:text-slate-100">
               {item.value}
             </p>
-            <p className="mt-1 text-sm text-[var(--color-secondary)]">{item.change}</p>
+            <p className="mt-1 text-sm text-[var(--color-secondary)] dark:text-[#b6ceb5]">{item.change}</p>
           </article>
         ))}
       </section>
 
       <section className="grid gap-4 xl:grid-cols-2">
-        <article className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+        <article className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-[#0b1730]">
           <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
             Monthly Cases vs Critical Findings
           </h2>
@@ -221,7 +233,7 @@ export function DoctorDashboardOverview({
           </div>
         </article>
 
-        <article className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+        <article className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-[#0b1730]">
           <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
             Triage Distribution
           </h2>
@@ -235,7 +247,7 @@ export function DoctorDashboardOverview({
       </section>
 
       <section className="grid gap-4 xl:grid-cols-[1.3fr_1fr]">
-        <article className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+        <article className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-[#0b1730]">
           <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
             Report Turnaround (Hours)
           </h2>
@@ -247,14 +259,14 @@ export function DoctorDashboardOverview({
           </div>
         </article>
 
-        <article className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900">
+        <article className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-[#0b1730]">
           <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
             Operational Alerts
           </h2>
           <ul className="mt-4 space-y-3 text-sm text-slate-700 dark:text-slate-300">
             {data.alerts.map((alert) => (
               <li
-                className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-800"
+                className="rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700/80 dark:bg-slate-900/70"
                 key={alert}
               >
                 {alert}
@@ -266,4 +278,3 @@ export function DoctorDashboardOverview({
     </main>
   );
 }
-

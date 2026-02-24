@@ -148,10 +148,10 @@ export function ChatWindow({ mode }: ChatWindowProps) {
   );
 
   return (
-    <section className="flex h-[calc(100vh-16rem)] min-h-[560px] flex-col gap-4">
-      <Card className="relative flex min-h-0 flex-1 overflow-hidden p-0">
+    <section className="flex h-[calc(100vh-13rem)] min-h-[520px] flex-col gap-4">
+      <Card className="relative flex min-h-0 flex-1 overflow-hidden border-slate-200/90 bg-gradient-to-b from-white to-slate-50 p-0 shadow-[0_12px_30px_rgba(15,23,42,0.08)] dark:border-slate-800 dark:bg-gradient-to-b dark:from-slate-950 dark:to-slate-900/70 dark:shadow-[0_12px_30px_rgba(2,8,23,0.45)]">
         <Conversation className="w-full">
-          <ConversationContent className="gap-4">
+          <ConversationContent className="gap-3 px-4 py-5 sm:px-6">
             {messages.length === 0 ? (
               <ConversationEmptyState
                 description="Ask your first question to start analysis."
@@ -172,15 +172,20 @@ export function ChatWindow({ mode }: ChatWindowProps) {
               <MessageBubble content="Working on your request..." role="assistant" />
             ) : null}
             {error ? (
-              <p className="text-xs text-red-600 dark:text-red-400">{error}</p>
+              <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">
+                {error}
+              </p>
             ) : null}
           </ConversationContent>
-          <ConversationScrollButton />
-          <ConversationDownload messages={exportableMessages} />
+          <ConversationScrollButton className="border-slate-300 bg-white/90 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900/85 dark:text-slate-200 dark:hover:bg-slate-800" />
+          <ConversationDownload
+            className="border-slate-300 bg-white/90 text-slate-700 hover:bg-white dark:border-slate-700 dark:bg-slate-900/85 dark:text-slate-200 dark:hover:bg-slate-800"
+            messages={exportableMessages}
+          />
         </Conversation>
       </Card>
 
-      <Card className="p-2">
+      <Card className="border-slate-200/90 bg-white/95 p-2.5 shadow-[0_10px_24px_rgba(15,23,42,0.06)] dark:border-slate-800 dark:bg-slate-950/80 dark:shadow-[0_10px_24px_rgba(2,8,23,0.45)]">
         <ChatInput
           disabled={isLoading}
           isSubmitting={isLoading}

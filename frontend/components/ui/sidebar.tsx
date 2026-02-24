@@ -85,7 +85,7 @@ export const DesktopSidebar = ({
   return (
     <motion.div
       className={cn(
-        "h-full px-4 py-4 hidden md:flex md:flex-col bg-white dark:bg-[var(--color-charcoal)] border-r border-slate-200 dark:border-slate-800 shrink-0",
+        "hidden h-full shrink-0 border-r border-slate-200 bg-white px-4 py-4 md:flex md:flex-col dark:border-slate-800 dark:bg-slate-950",
         className,
       )}
       animate={{
@@ -109,7 +109,7 @@ export const MobileSidebar = ({
   return (
     <div
       className={cn(
-        "h-12 px-4 flex flex-row md:hidden items-center justify-between bg-white dark:bg-[var(--color-charcoal)] border-b border-slate-200 dark:border-slate-800 w-full z-40",
+        "z-40 flex h-12 w-full flex-row items-center justify-between border-slate-200 border-b bg-white px-4 dark:border-slate-800 dark:bg-slate-950 md:hidden",
       )}
       {...props}
     >
@@ -130,7 +130,7 @@ export const MobileSidebar = ({
               ease: "easeInOut",
             }}
             className={cn(
-              "fixed h-full w-72 inset-0 bg-white dark:bg-[var(--color-charcoal)] p-8 z-[100] flex flex-col justify-between shadow-2xl",
+              "fixed inset-0 z-[100] flex h-full w-72 flex-col justify-between bg-white p-8 shadow-2xl dark:bg-slate-950",
               className,
             )}
           >
@@ -161,7 +161,7 @@ export const SidebarLink = ({
     <a
       href={link.href}
       className={cn(
-        "flex items-center justify-start gap-2 group/sidebar py-2 px-2 rounded-lg transition-colors hover:bg-slate-100 dark:hover:bg-slate-800",
+        "group/sidebar flex items-center justify-start gap-2 rounded-lg px-2 py-2 transition-colors hover:bg-slate-100 dark:hover:bg-slate-800/80",
         className,
       )}
       {...props}

@@ -9,6 +9,11 @@ import "../styles/theme.css";
 export const metadata: Metadata = {
   title: "OrthoAssist",
   description: "OrthoAssist frontend scaffold",
+  icons: {
+    icon: [{ type: "image/png", url: "/ortho_icon_s.png" }],
+    shortcut: "/ortho_icon_s.png",
+    apple: "/ortho_icon_s.png",
+  },
 };
 
 const themeScript = `
