@@ -1,0 +1,20 @@
+# Node / Next.js
+node_modules/
+.next/
+out/
+
+# Build and logs
+dist/
+*.log
+*.tsbuildinfo
+
+# Environment files
+.env
+.env.*
+.env.example
+
+# Editor / OS noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
