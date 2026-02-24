@@ -3,20 +3,30 @@ import { NextResponse } from "next/server";
 
 import {
   DASHBOARD_ROUTES,
-  DEFAULT_ROLE,
+  ROLE_COOKIE_NAME,
+  ROLE_SELECTION_ROUTE,
   type AppRole,
 } from "./lib/constants";
 import {
   dashboardPathForRole,
   getRoleFromSessionClaims,
-  isAppRole,
+  parseRole,
 } from "./lib/rbac";
 
-function resolveRedirectRole(role: AppRole | null): AppRole {
-  if (isAppRole(role)) {
-    return role;
+function resolveRole(
+  claims: Record<string, unknown> | undefined,
+  cookieRole: string | undefined
+): AppRole | null {
+  const claimsRole = getRoleFromSessionClaims(claims);
+  if (claimsRole) {
+    return claimsRole;
   }
-  return DEFAULT_ROLE;
+
+  return parseRole(cookieRole);
+}
+
+function redirectToRoleSelection(req: Request): NextResponse {
+  return NextResponse.redirect(new URL(ROLE_SELECTION_ROUTE, req.url));
 }
 
 export default clerkMiddleware(async (auth, req) => {
@@ -33,25 +43,37 @@ export default clerkMiddleware(async (auth, req) => {
     return authObject.redirectToSignIn();
   }
 
-  const role = getRoleFromSessionClaims(
-    authObject.sessionClaims as Record<string, unknown> | undefined
+  const cookieRole = req.cookies.get(ROLE_COOKIE_NAME)?.value;
+
+  const resolvedRole = resolveRole(
+    authObject.sessionClaims as Record<string, unknown> | undefined,
+    cookieRole
   );
 
-  const redirectedRole = resolveRedirectRole(role);
-  const redirectedPath = dashboardPathForRole(redirectedRole);
+  if (!resolvedRole) {
+    return redirectToRoleSelection(req);
+  }
+
+  if (pathname === "/dashboard") {
+    return NextResponse.redirect(new URL(dashboardPathForRole(resolvedRole), req.url));
+  }
 
   if (
     pathname.startsWith(DASHBOARD_ROUTES.doctor) &&
-    redirectedRole !== "doctor"
+    resolvedRole !== "doctor"
   ) {
-    return NextResponse.redirect(new URL(redirectedPath, req.url));
+    return NextResponse.redirect(
+      new URL(dashboardPathForRole(resolvedRole), req.url)
+    );
   }
 
   if (
     pathname.startsWith(DASHBOARD_ROUTES.patient) &&
-    redirectedRole !== "patient"
+    resolvedRole !== "patient"
   ) {
-    return NextResponse.redirect(new URL(redirectedPath, req.url));
+    return NextResponse.redirect(
+      new URL(dashboardPathForRole(resolvedRole), req.url)
+    );
   }
 
   return NextResponse.next();
