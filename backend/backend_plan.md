@@ -579,7 +579,7 @@ hospital_get_emergency_contacts
       "args": ["-m", "mcp.server"],
       "cwd": "/path/to/ortho-backend",
       "env": {
-        "GROQ_API_KEY": "your_key",
+        "OPENAI_API_KEY": "your_key",
         "LANGSMITH_API_KEY": "your_key"
       }
     }
@@ -766,8 +766,8 @@ HOST=0.0.0.0
 PORT=8000
 DEBUG=false
 
-# ── Groq (LLM) ──────────────────────────
-GROQ_API_KEY=gsk_...
+# ── OpenAI (LLM) ──────────────────────────
+OPENAI_API_KEY=sk-proj-...
 
 # ── LangSmith (Observability) ────────────
 LANGCHAIN_TRACING_V2=true
@@ -778,8 +778,8 @@ LANGCHAIN_ENDPOINT=https://api.smith.langchain.com
 # ── Models ──────────────────────────────
 HAND_MODEL_PATH=models/hand_yolo.pt
 LEG_MODEL_PATH=models/leg_yolo.pt
-SUPERVISOR_LLM=llama-3.3-70b-versatile
-FAST_LLM=llama-3.1-8b-instant
+SUPERVISOR_LLM=gpt-4o
+FAST_LLM=gpt-4o-mini
 
 # ── Detection Thresholds ─────────────────
 ROUTER_THRESHOLD=0.70

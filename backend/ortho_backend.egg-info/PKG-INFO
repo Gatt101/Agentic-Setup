@@ -9,13 +9,12 @@ Requires-Dist: uvicorn[standard]>=0.32.0
 Requires-Dist: python-multipart>=0.0.12
 Requires-Dist: langchain>=0.3.0
 Requires-Dist: langchain-core>=0.3.0
-Requires-Dist: langchain-groq>=0.2.0
+Requires-Dist: langchain-openai>=0.2.0
 Requires-Dist: langchain-community>=0.3.0
 Requires-Dist: langgraph>=0.2.0
 Requires-Dist: langgraph-checkpoint>=2.0.0
 Requires-Dist: langsmith>=0.2.0
 Requires-Dist: mcp>=1.0.0
-Requires-Dist: groq>=0.11.0
 Requires-Dist: torch>=2.1.0
 Requires-Dist: torchvision>=0.16.0
 Requires-Dist: ultralytics>=8.3.0
@@ -32,6 +31,7 @@ Requires-Dist: loguru>=0.7.0
 Requires-Dist: httpx>=0.27.0
 Requires-Dist: python-jose>=3.3.0
 Requires-Dist: passlib>=1.7.4
+Requires-Dist: motor>=3.6.0
 
 # OrthoAssist Backend
 
@@ -64,4 +64,4 @@ python mcp/server.py
 ## Notes
 
 - Tool implementations are currently safe fallbacks and should be replaced with production model inference.
-- Set `GROQ_API_KEY` and LangSmith variables in `.env` before running agent flows.
+- Set `OPENAI_API_KEY` and LangSmith variables in `.env` before running agent flows.

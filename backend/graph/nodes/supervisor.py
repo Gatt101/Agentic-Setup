@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from langchain_core.messages import HumanMessage, SystemMessage
+from loguru import logger
 
 from graph.state import AgentState
 from services.groq_llm import get_supervisor_llm
+from services.chat_store import chat_store
 from tools import ALL_TOOLS
 
 SUPERVISOR_PROMPT = """You are an orthopedic AI clinical assistant.
@@ -43,6 +45,8 @@ async def supervisor_node(state: AgentState) -> dict:
     has_image_data = bool(state.get("image_data"))
     toolset = ALL_TOOLS if has_image_data else NON_VISION_TOOLS
     llm = get_supervisor_llm().bind_tools(toolset)
+    session_id = state.get("session_id", "unknown")
+    iteration = state.get("iteration_count", 0)
 
     messages = list(state.get("messages", []))
     if not messages and state.get("user_message"):
@@ -70,10 +74,30 @@ async def supervisor_node(state: AgentState) -> dict:
     called = [call.get("name", "") for call in getattr(response, "tool_calls", []) if call.get("name")]
     active_agent = _tool_to_agent(called[-1]) if called else state.get("current_agent")
 
+    logger.info(
+        "session={} iteration={} active_agent={} tool_calls={}",
+        session_id,
+        iteration,
+        active_agent or "none",
+        ",".join(called) if called else "none",
+    )
+
+    trace_event = {
+        "type": "supervisor_decision",
+        "iteration": iteration,
+        "active_agent": active_agent or "none",
+        "tool_calls": called,
+    }
+    try:
+        await chat_store.append_trace_event(session_id, trace_event)
+    except Exception:
+        pass
+
     return {
         "messages": [response],
         "iteration_count": state.get("iteration_count", 0) + 1,
         "tool_calls_made": [*state.get("tool_calls_made", []), *called],
+        "agent_trace": [*state.get("agent_trace", []), trace_event],
         "current_agent": active_agent,
         "error": None,
     }

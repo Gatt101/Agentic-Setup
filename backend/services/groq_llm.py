@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 
-from langchain_groq import ChatGroq
+from langchain_openai import ChatOpenAI
 
 from core.config import settings
 
@@ -18,28 +18,28 @@ def _configure_langsmith_environment() -> None:
         os.environ["LANGCHAIN_ENDPOINT"] = settings.langchain_endpoint
 
 
-def _assert_groq_key() -> None:
-    if not settings.groq_api_key:
-        raise RuntimeError("GROQ_API_KEY is required to run LangGraph agents.")
+def _assert_openai_key() -> None:
+    if not settings.openai_api_key:
+        raise RuntimeError("OPENAI_API_KEY is required to run LangGraph agents.")
 
 
 @lru_cache(maxsize=1)
-def get_supervisor_llm() -> ChatGroq:
+def get_supervisor_llm() -> ChatOpenAI:
     _configure_langsmith_environment()
-    _assert_groq_key()
-    return ChatGroq(
+    _assert_openai_key()
+    return ChatOpenAI(
         model=settings.supervisor_llm,
         temperature=0.1,
-        api_key=settings.groq_api_key,
+        api_key=settings.openai_api_key,
     )
 
 
 @lru_cache(maxsize=1)
-def get_fast_llm() -> ChatGroq:
+def get_fast_llm() -> ChatOpenAI:
     _configure_langsmith_environment()
-    _assert_groq_key()
-    return ChatGroq(
+    _assert_openai_key()
+    return ChatOpenAI(
         model=settings.fast_llm,
         temperature=0.0,
-        api_key=settings.groq_api_key,
+        api_key=settings.openai_api_key,
     )

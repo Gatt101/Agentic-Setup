@@ -13,6 +13,7 @@ api/endpoints/__init__.py
 api/endpoints/analyze.py
 api/endpoints/chat.py
 api/endpoints/health.py
+api/endpoints/knowledge.py
 api/endpoints/metrics.py
 api/endpoints/reports.py
 api/schemas/__init__.py
@@ -37,7 +38,10 @@ ortho_backend.egg-info/dependency_links.txt
 ortho_backend.egg-info/requires.txt
 ortho_backend.egg-info/top_level.txt
 services/__init__.py
+services/chat_store.py
 services/groq_llm.py
+services/mongo.py
+services/rag_store.py
 services/session.py
 services/storage.py
 tools/__init__.py
@@ -70,3 +74,4 @@ tools/vision/body_part_detector.py
 tools/vision/hand_detector.py
 tools/vision/leg_detector.py
 tools/vision/uploader.py
+tools/vision/yolo_runtime.py

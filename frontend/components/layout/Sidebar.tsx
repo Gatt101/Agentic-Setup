@@ -12,8 +12,8 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import React, { useState } from "react";
+import { usePathname, useSearchParams } from "next/navigation";
+import React, { useEffect, useState } from "react";
 
 import { HeaderUserButton } from "@/components/layout/HeaderUserButton";
 import {
@@ -27,7 +27,15 @@ import { cn } from "@/lib/utils";
 
 type SidebarProps = {
   role: AppRole;
+  userId: string;
 };
+
+type ChatSessionSummary = {
+  chat_id: string;
+  title: string;
+};
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api";
 
 const doctorLinks = [
   {
@@ -106,10 +114,46 @@ function OrthoLogo({ open }: { open: boolean }) {
   );
 }
 
-export function AppSidebar({ role }: SidebarProps) {
+export function AppSidebar({ role, userId }: SidebarProps) {
   const [open, setOpen] = useState(false);
+  const [chatSessions, setChatSessions] = useState<ChatSessionSummary[]>([]);
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const activeChatId = searchParams.get("chat_id");
   const links = role === "doctor" ? doctorLinks : patientLinks;
+  const chatBaseHref = role === "doctor" ? "/dashboard/doctor/chat" : "/dashboard/patient/chat";
+
+  useEffect(() => {
+    const loadSessions = async () => {
+      try {
+        const response = await fetch(
+          `${API_BASE_URL}/chat/sessions?actor_id=${encodeURIComponent(userId)}&actor_role=${encodeURIComponent(role)}`,
+          { cache: "no-store" }
+        );
+        if (!response.ok) {
+          return;
+        }
+        const payload = (await response.json()) as ChatSessionSummary[];
+        setChatSessions(Array.isArray(payload) ? payload.slice(0, 8) : []);
+      } catch {
+        // Ignore sidebar session fetch errors.
+      }
+    };
+
+    void loadSessions();
+    const shouldPoll = pathname.includes("/chat");
+    if (!shouldPoll) {
+      return;
+    }
+
+    const interval = setInterval(() => {
+      void loadSessions();
+    }, 3000);
+
+    return () => {
+      clearInterval(interval);
+    };
+  }, [activeChatId, pathname, role, userId]);
 
   return (
     <Sidebar open={open} setOpen={setOpen}>
@@ -141,6 +185,29 @@ export function AppSidebar({ role }: SidebarProps) {
                 )}
               />
             ))}
+
+            {pathname.includes("/chat") && chatSessions.length > 0 ? (
+              <div className="mt-3 space-y-1">
+                <p className="px-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
+                  Recent Chats
+                </p>
+                {chatSessions.map((session) => {
+                  const href = `${chatBaseHref}?chat_id=${encodeURIComponent(session.chat_id)}`;
+                  const isActive = activeChatId === session.chat_id;
+                  return (
+                    <SidebarLink
+                      key={session.chat_id}
+                      link={{
+                        href,
+                        icon: <MessageSquare className="h-4 w-4 shrink-0" />,
+                        label: session.title || "Untitled chat",
+                      }}
+                      className={cn(isActive ? "bg-[var(--color-primary)]/10 dark:bg-[var(--color-primary)]/20" : "")}
+                    />
+                  );
+                })}
+              </div>
+            ) : null}
           </nav>
         </div>
         <div className="flex flex-col gap-2">

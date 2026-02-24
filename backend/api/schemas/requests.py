@@ -14,11 +14,32 @@ class AnalyzeRequest(BaseModel):
 
 
 class ChatRequest(BaseModel):
+    actor_id: str
+    actor_role: str = "patient"
     message: str
     session_id: str | None = None
     attachment: str | None = None
     patient_id: str | None = None
     location: str | None = None
+
+
+class ChatSessionCreateRequest(BaseModel):
+    actor_id: str
+    actor_role: str = "patient"
+    patient_id: str | None = None
+    title: str | None = None
+
+
+class DoctorPatientAssignRequest(BaseModel):
+    doctor_id: str
+    patient_id: str
+
+
+class KnowledgeDocumentIngestRequest(BaseModel):
+    title: str
+    content: str
+    source: str = "manual"
+    patient_id: str | None = None
 
 
 class ReportSaveRequest(BaseModel):

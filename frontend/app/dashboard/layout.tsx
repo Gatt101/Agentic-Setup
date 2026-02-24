@@ -29,5 +29,9 @@ export default async function DashboardLayout({
     redirect(ROLE_SELECTION_ROUTE);
   }
 
-  return <DashboardShell role={resolvedRole}>{children}</DashboardShell>;
+  return (
+    <DashboardShell role={resolvedRole} userId={userId}>
+      {children}
+    </DashboardShell>
+  );
 }

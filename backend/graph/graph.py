@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from langchain_core.messages import HumanMessage
 from langgraph.graph import END, START, StateGraph
+from loguru import logger
 
 from core.config import settings
 from core.exceptions import AgentExecutionError
@@ -14,7 +15,7 @@ from graph.nodes.response_builder import response_builder_node
 from graph.nodes.supervisor import supervisor_node
 from graph.nodes.tool_executor import tool_executor_node
 from graph.state import AgentState, base_state
-from services.session import session_store
+from services.chat_store import chat_store
 
 
 def should_continue(state: AgentState) -> str:
@@ -84,16 +85,27 @@ async def run_agent(payload: dict) -> AgentState:
         state["messages"] = [HumanMessage(content=user_message)]
 
     try:
+        await chat_store.init_trace(session_id)
+    except Exception:
+        pass
+    logger.info("session={} agent_run_started", session_id)
+
+    try:
         result = await graph.ainvoke(state, config={"configurable": {"thread_id": session_id}})
     except Exception as exc:
+        logger.exception("session={} agent_run_failed", session_id)
         raise AgentExecutionError(str(exc)) from exc
 
-    session_store.set(
+    logger.info(
+        "session={} agent_run_completed iterations={} active_agent={}",
         session_id,
-        {
-            "last_response": result.get("final_response"),
-            "updated_at": result.get("iteration_count", 0),
-        },
+        result.get("iteration_count", 0),
+        result.get("current_agent") or "none",
     )
+
+    try:
+        await chat_store.complete_trace(session_id, result.get("agent_trace", []))
+    except Exception:
+        pass
 
     return result

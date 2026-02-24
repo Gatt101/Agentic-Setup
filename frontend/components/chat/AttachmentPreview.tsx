@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import { FileTextIcon, ImageIcon, PaperclipIcon } from "lucide-react";
 
 import type { ChatAttachment } from "@/hooks/useChat";
@@ -23,13 +22,10 @@ export function AttachmentPreview({ attachment }: AttachmentPreviewProps) {
   return (
     <div className="mt-2 w-full max-w-sm rounded-lg border border-slate-200 bg-slate-50/70 p-2 dark:border-slate-700 dark:bg-slate-900/40">
       {imageAttachment && attachment.dataUrl ? (
-        <Image
+        <img
           alt={attachment.name}
-          className="h-40 w-full rounded-md object-cover"
-          height={160}
+          className="max-h-[420px] w-full rounded-md bg-slate-950 object-contain"
           src={attachment.dataUrl}
-          unoptimized
-          width={320}
         />
       ) : null}
       <div className="mt-2 flex items-center gap-2 text-xs text-slate-700 dark:text-slate-200">

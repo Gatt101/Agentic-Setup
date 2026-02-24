@@ -31,6 +31,42 @@ class InMemorySessionStore:
         self._cleanup()
         self._records[session_id] = SessionRecord(values=values, expires_at=self._expiry())
 
+    def init_run(self, session_id: str) -> None:
+        self._cleanup()
+        current = self.get(session_id) or {}
+        current.update(
+            {
+                "status": "running",
+                "trace": [],
+            }
+        )
+        self._records[session_id] = SessionRecord(values=current, expires_at=self._expiry())
+
+    def append_trace(self, session_id: str, event: dict[str, Any]) -> None:
+        self._cleanup()
+        current = self.get(session_id) or {"status": "running", "trace": []}
+        trace = current.get("trace")
+        if not isinstance(trace, list):
+            trace = []
+        trace.append(event)
+        current["trace"] = trace
+        self._records[session_id] = SessionRecord(values=current, expires_at=self._expiry())
+
+    def mark_complete(self, session_id: str, values: dict[str, Any]) -> None:
+        self._cleanup()
+        current = self.get(session_id) or {}
+        current.update(values)
+        current["status"] = "completed"
+        self._records[session_id] = SessionRecord(values=current, expires_at=self._expiry())
+
+    def get_trace(self, session_id: str) -> dict[str, Any]:
+        record = self.get(session_id) or {}
+        trace = record.get("trace")
+        return {
+            "status": record.get("status", "idle"),
+            "trace": trace if isinstance(trace, list) else [],
+        }
+
     def get(self, session_id: str) -> dict[str, Any] | None:
         self._cleanup()
         record = self._records.get(session_id)

@@ -13,10 +13,10 @@ class Settings(BaseSettings):
     port: int = 8000
     debug: bool = False
 
-    # Groq
-    groq_api_key: str = ""
-    supervisor_llm: str = "llama-3.3-70b-versatile"
-    fast_llm: str = "llama-3.1-8b-instant"
+    # OpenAI
+    openai_api_key: str = ""
+    supervisor_llm: str = "gpt-4o"
+    fast_llm: str = "gpt-4o-mini"
 
     # LangSmith
     langchain_tracing_v2: bool = True
@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     max_agent_iterations: int = 10
     session_ttl_seconds: int = 3600
 
+    # MongoDB
+    mongodb_uri: str = ""
+    mongodb_db_name: str = "orthoassist"
+
     # API
     cors_allow_origins: str = "*"
     chat_request_timeout_seconds: int = 45
@@ -68,6 +72,20 @@ class Settings(BaseSettings):
         if not storage.is_absolute():
             storage = self.project_root / storage
         return storage.resolve()
+
+    @property
+    def resolved_hand_model_path(self) -> Path:
+        hand_model = Path(self.hand_model_path)
+        if not hand_model.is_absolute():
+            hand_model = self.project_root / hand_model
+        return hand_model.resolve()
+
+    @property
+    def resolved_leg_model_path(self) -> Path:
+        leg_model = Path(self.leg_model_path)
+        if not leg_model.is_absolute():
+            leg_model = self.project_root / leg_model
+        return leg_model.resolve()
 
     @property
     def cors_origins(self) -> list[str]:

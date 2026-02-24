@@ -3,8 +3,9 @@
 import {
   Message,
   MessageContent,
+  MessageResponse,
 } from "@/components/ai-elements/message";
-import type { ChatAttachment } from "@/hooks/useChat";
+import type { AgentTraceStep, ChatAttachment } from "@/hooks/useChat";
 import { cn } from "@/lib/utils";
 
 import { AttachmentPreview } from "./AttachmentPreview";
@@ -15,9 +16,23 @@ type MessageBubbleProps = {
   attachment?: ChatAttachment;
   content: string;
   role: ChatRole;
+  trace?: AgentTraceStep[];
 };
 
-export function MessageBubble({ attachment, content, role }: MessageBubbleProps) {
+function formatTraceStep(step: AgentTraceStep): string {
+  if (step.type === "supervisor_decision") {
+    const iteration = typeof step.iteration === "number" ? `iter ${step.iteration}` : "iter ?";
+    const agent = step.active_agent || "unknown_agent";
+    const calls = Array.isArray(step.tool_calls) && step.tool_calls.length > 0 ? step.tool_calls.join(", ") : "none";
+    return `${iteration} | ${agent} | planned: ${calls}`;
+  }
+  if (step.type === "tool_execution") {
+    return `executed: ${step.tool_name || "unknown_tool"}`;
+  }
+  return JSON.stringify(step);
+}
+
+export function MessageBubble({ attachment, content, role, trace }: MessageBubbleProps) {
   const isUser = role === "user";
 
   return (
@@ -31,8 +46,26 @@ export function MessageBubble({ attachment, content, role }: MessageBubbleProps)
               : "border-slate-200 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-100"
           )}
         >
-          {content ? <p className="m-0 whitespace-pre-wrap text-[15px] leading-relaxed">{content}</p> : null}
+          {content ? (
+            isUser ? (
+              <p className="m-0 whitespace-pre-wrap text-[15px] leading-relaxed">{content}</p>
+            ) : (
+              <MessageResponse className="text-[15px] leading-relaxed">{content}</MessageResponse>
+            )
+          ) : null}
           {attachment ? <AttachmentPreview attachment={attachment} /> : null}
+          {role === "assistant" && Array.isArray(trace) && trace.length > 0 ? (
+            <details className="mt-2 rounded-md border border-slate-200 bg-slate-50/70 p-2 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900/40 dark:text-slate-200">
+              <summary className="cursor-pointer font-medium">Agent trace</summary>
+              <div className="mt-2 space-y-1">
+                {trace.map((step, index) => (
+                  <p className="m-0" key={`trace-${index.toString(36)}`}>
+                    {index + 1}. {formatTraceStep(step)}
+                  </p>
+                ))}
+              </div>
+            </details>
+          ) : null}
         </div>
       </MessageContent>
     </Message>

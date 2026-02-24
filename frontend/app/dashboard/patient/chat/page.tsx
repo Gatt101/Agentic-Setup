@@ -1,6 +1,12 @@
+import { auth } from "@clerk/nextjs/server";
 import { ChatWindow } from "@/components/chat/ChatWindow";
 
-export default function PatientChatPage() {
+export default async function PatientChatPage() {
+  const { userId, redirectToSignIn } = await auth();
+  if (!userId) {
+    return redirectToSignIn();
+  }
+
   return (
     <main className="mx-auto w-full max-w-[1400px] space-y-5 p-6">
       <div>
@@ -11,7 +17,7 @@ export default function PatientChatPage() {
           Ask questions in plain language and get practical next steps.
         </p>
       </div>
-      <ChatWindow mode="patient" />
+      <ChatWindow actorId={userId} mode="patient" patientId={userId} />
     </main>
   );
 }

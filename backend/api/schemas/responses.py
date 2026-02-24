@@ -4,6 +4,8 @@ from pydantic import BaseModel
 
 
 class AgentResponse(BaseModel):
+    chat_id: str | None = None
+    message_id: str | None = None
     session_id: str
     final_response: str
     body_part: str | None = None
@@ -11,6 +13,39 @@ class AgentResponse(BaseModel):
     triage: dict | None = None
     hospitals: list[dict] | None = None
     report_url: str | None = None
+    annotated_image_base64: str | None = None
+    agent_trace: list[dict] | None = None
+
+
+class ChatSessionSummary(BaseModel):
+    chat_id: str
+    title: str
+    owner_role: str
+    patient_id: str
+    doctor_id: str | None = None
+    last_message_at: str
+    created_at: str
+
+
+class ChatMessageRecord(BaseModel):
+    message_id: str
+    chat_id: str
+    sender_role: str
+    content: str
+    attachment_data_url: str | None = None
+    annotated_image_base64: str | None = None
+    agent_trace: list[dict] | None = None
+    created_at: str
+
+
+class ChatSessionCreateResponse(BaseModel):
+    chat_id: str
+    title: str
+
+
+class KnowledgeDocumentIngestResponse(BaseModel):
+    document_id: str
+    chunk_count: int
 
 
 class ReportSaveResponse(BaseModel):

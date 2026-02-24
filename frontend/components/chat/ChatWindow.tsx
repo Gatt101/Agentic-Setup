@@ -11,7 +11,8 @@ import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
 import { Card } from "@/components/ui/card";
 import { type ChatAttachment, useChat } from "@/hooks/useChat";
 import { MessageCircleIcon } from "lucide-react";
-import { useMemo } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo } from "react";
 
 import { ChatInput } from "./ChatInput";
 import { MessageBubble } from "./MessageBubble";
@@ -19,7 +20,9 @@ import { MessageBubble } from "./MessageBubble";
 type ChatWindowMode = "doctor" | "patient";
 
 type ChatWindowProps = {
+  actorId: string;
   mode: ChatWindowMode;
+  patientId?: string;
 };
 
 const openingMessageByMode: Record<ChatWindowMode, string> = {
@@ -128,10 +131,28 @@ async function pickAttachmentPayload(
   };
 }
 
-export function ChatWindow({ mode }: ChatWindowProps) {
-  const { messages, isLoading, error, sendMessage, stop } = useChat({
+export function ChatWindow({ actorId, mode, patientId }: ChatWindowProps) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const currentChatId = searchParams.get("chat_id");
+  const patientIdFromQuery = searchParams.get("patient_id") || undefined;
+
+  const { chatId, messages, isLoading, liveTrace, error, sendMessage, stop } = useChat({
+    actorId,
+    actorRole: mode,
+    initialChatId: currentChatId,
     openingMessage: openingMessageByMode[mode],
+    patientId: patientId ?? patientIdFromQuery,
   });
+
+  useEffect(() => {
+    if (!chatId || chatId === currentChatId) {
+      return;
+    }
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("chat_id", chatId);
+    router.replace(`?${params.toString()}`);
+  }, [chatId, currentChatId, router, searchParams]);
 
   const handleSend = async (message: PromptInputMessage) => {
     const attachmentSelection = await pickAttachmentPayload(message.files);
@@ -148,7 +169,7 @@ export function ChatWindow({ mode }: ChatWindowProps) {
   );
 
   return (
-    <section className="flex h-[calc(100vh-13rem)] min-h-[520px] flex-col gap-4">
+    <section className="flex h-[calc(100vh-11rem)] min-h-[460px] max-h-[820px] flex-col gap-3">
       <Card className="relative flex min-h-0 flex-1 overflow-hidden border-slate-200/90 bg-gradient-to-b from-white to-slate-50 p-0 shadow-[0_12px_30px_rgba(15,23,42,0.08)] dark:border-slate-800 dark:bg-gradient-to-b dark:from-slate-950 dark:to-slate-900/70 dark:shadow-[0_12px_30px_rgba(2,8,23,0.45)]">
         <Conversation className="w-full">
           <ConversationContent className="gap-3 px-4 py-5 sm:px-6">
@@ -165,11 +186,16 @@ export function ChatWindow({ mode }: ChatWindowProps) {
                   content={message.content}
                   key={message.id}
                   role={message.role}
+                  trace={message.trace}
                 />
               ))
             )}
             {isLoading ? (
-              <MessageBubble content="Working on your request..." role="assistant" />
+              <MessageBubble
+                content="Working on your request..."
+                role="assistant"
+                trace={liveTrace}
+              />
             ) : null}
             {error ? (
               <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">
@@ -185,7 +211,7 @@ export function ChatWindow({ mode }: ChatWindowProps) {
         </Conversation>
       </Card>
 
-      <Card className="border-slate-200/90 bg-white/95 p-2.5 shadow-[0_10px_24px_rgba(15,23,42,0.06)] dark:border-slate-800 dark:bg-slate-950/80 dark:shadow-[0_10px_24px_rgba(2,8,23,0.45)]">
+      <Card className="border-slate-200/90 bg-white/95 p-2 shadow-[0_10px_24px_rgba(15,23,42,0.06)] dark:border-slate-800 dark:bg-slate-950/80 dark:shadow-[0_10px_24px_rgba(2,8,23,0.45)]">
         <ChatInput
           disabled={isLoading}
           isSubmitting={isLoading}

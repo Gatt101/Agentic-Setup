@@ -26,6 +26,7 @@ class AgentState(TypedDict, total=False):
     # LangGraph internals
     messages: Annotated[list[BaseMessage], add_messages]
     tool_calls_made: list[str]
+    agent_trace: list[dict[str, Any]]
     current_agent: str | None
     iteration_count: int
     error: str | None
@@ -46,6 +47,7 @@ def base_state() -> AgentState:
         "report_url": None,
         "messages": [],
         "tool_calls_made": [],
+        "agent_trace": [],
         "current_agent": None,
         "iteration_count": 0,
         "error": None,

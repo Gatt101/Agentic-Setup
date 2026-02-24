@@ -4,6 +4,7 @@ from api.middleware import setup_middleware
 from api.router import api_router
 from core.config import settings
 from core.logging import configure_logging
+from services.mongo import mongo_service
 from services.storage import storage_service
 
 
@@ -22,6 +23,11 @@ def create_app() -> FastAPI:
     @app.on_event("startup")
     async def startup_event() -> None:
         await storage_service.initialize()
+        await mongo_service.initialize()
+
+    @app.on_event("shutdown")
+    async def shutdown_event() -> None:
+        await mongo_service.close()
 
     return app
 

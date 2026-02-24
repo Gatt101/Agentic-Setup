@@ -29,4 +29,4 @@ python mcp/server.py
 ## Notes
 
 - Tool implementations are currently safe fallbacks and should be replaced with production model inference.
-- Set `GROQ_API_KEY` and LangSmith variables in `.env` before running agent flows.
+- Set `OPENAI_API_KEY` and LangSmith variables in `.env` before running agent flows.
