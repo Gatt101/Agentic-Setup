@@ -2,6 +2,7 @@
 
 import React, { useRef, useState } from "react";
 import { Menu, X } from "lucide-react";
+import Image from "next/image";
 import {
   AnimatePresence,
   motion,
@@ -10,6 +11,7 @@ import {
 } from "framer-motion";
 
 import { cn } from "@/lib/utils";
+import orthoIconS from "@/icons/ortho_icon_s.png";
 
 interface NavbarProps {
   children: React.ReactNode;
@@ -233,9 +235,13 @@ export const NavbarLogo = ({ href = "/" }: { href?: string }) => {
       className="relative z-20 mr-4 flex items-center space-x-2 px-2 py-1 text-sm font-normal text-black"
       href={href}
     >
-      <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-[var(--color-primary)] text-xs font-semibold text-white">
-        OA
-      </span>
+      <Image
+        alt="OrthoAssist"
+        className="h-7 w-7 rounded-md object-cover ring-1 ring-slate-300/80 dark:ring-slate-700/80"
+        height={28}
+        src={orthoIconS}
+        width={28}
+      />
       <span className="font-medium text-black dark:text-white">OrthoAssist</span>
     </a>
   );

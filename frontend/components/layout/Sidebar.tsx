@@ -10,6 +10,7 @@ import {
     Settings,
     Users,
 } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import React, { useState } from "react";
@@ -20,6 +21,7 @@ import {
     SidebarBody,
     SidebarLink,
 } from "@/components/ui/sidebar";
+import orthoIconS from "@/icons/ortho_icon_s.png";
 import type { AppRole } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
@@ -84,9 +86,13 @@ function OrthoLogo({ open }: { open: boolean }) {
       href="/"
       className="relative z-20 flex items-center gap-2 py-1 text-sm font-semibold text-slate-900 dark:text-slate-100 select-none"
     >
-      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-[var(--color-primary)] text-white text-xs font-bold shadow-sm">
-        OA
-      </div>
+      <Image
+        alt="OrthoAssist"
+        className="h-8 w-8 shrink-0 rounded-xl object-cover ring-1 ring-slate-300/80 shadow-sm dark:ring-slate-700/80"
+        height={32}
+        src={orthoIconS}
+        width={32}
+      />
       <motion.span
         animate={{
           display: open ? "inline-block" : "none",
@@ -123,14 +129,14 @@ export function AppSidebar({ role }: SidebarProps) {
                         "h-5 w-5 shrink-0 transition-colors",
                         pathname === link.href || pathname.startsWith(link.href + "/")
                           ? "text-[var(--color-primary)]"
-                          : "text-slate-500 dark:text-slate-400",
+                          : "text-slate-500 dark:text-slate-300",
                       ),
                     },
                   ),
                 }}
                 className={cn(
                   pathname === link.href || pathname.startsWith(link.href + "/")
-                    ? "bg-[var(--color-primary)]/10 dark:bg-[var(--color-primary)]/15"
+                    ? "bg-[var(--color-primary)]/10 dark:bg-[var(--color-primary)]/20"
                     : "",
                 )}
               />

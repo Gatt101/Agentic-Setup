@@ -24,7 +24,7 @@ function ChatInputAttachments() {
   }
 
   return (
-    <PromptInputHeader className="gap-2 border-b border-slate-200 px-3 pb-2 pt-2 dark:border-slate-800">
+    <PromptInputHeader className="gap-2 border-b border-slate-200 px-3 pb-2 pt-2 dark:border-slate-800/80">
       {attachments.files.map((file) => {
         const isImage = file.mediaType?.startsWith("image/");
         const name =
@@ -34,7 +34,7 @@ function ChatInputAttachments() {
 
         return (
           <div
-            className="flex items-center gap-1 rounded-full border border-slate-300 bg-slate-50 px-2 py-1 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200"
+            className="flex items-center gap-1 rounded-full border border-slate-300 bg-slate-50 px-2 py-1 text-xs text-slate-700 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-200"
             key={file.id}
           >
             {isImage ? (
@@ -90,14 +90,19 @@ export function ChatInput({
   return (
     <PromptInput
       accept="image/*,.pdf,.doc,.docx"
+      className="rounded-xl border border-slate-200 bg-white/95 dark:border-slate-800 dark:bg-slate-950/70"
       maxFiles={4}
       multiple
       onSubmit={handleSubmit}
       syncHiddenInput={false}
     >
       <ChatInputAttachments />
-      <PromptInputTextarea disabled={disabled} placeholder={placeholder} />
-      <PromptInputFooter>
+      <PromptInputTextarea
+        className="min-h-[130px] text-[15px] leading-relaxed text-slate-800 placeholder:text-slate-400 dark:text-slate-100 dark:placeholder:text-slate-500"
+        disabled={disabled}
+        placeholder={placeholder}
+      />
+      <PromptInputFooter className="border-slate-200 border-t pt-2 dark:border-slate-800/80">
         <PromptInputTools>
           <PromptInputActionMenu>
             <PromptInputActionMenuTrigger

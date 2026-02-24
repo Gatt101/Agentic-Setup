@@ -11,7 +11,7 @@ type DashboardShellProps = {
 
 export function DashboardShell({ children, role }: DashboardShellProps) {
   return (
-    <div className="flex flex-col md:flex-row h-screen overflow-hidden bg-[var(--color-off-white)] dark:bg-[var(--color-charcoal)]">
+    <div className="flex h-screen flex-col overflow-hidden bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100 md:flex-row">
       <AppSidebar role={role} />
       <main className="flex-1 overflow-y-auto">
         {children}
