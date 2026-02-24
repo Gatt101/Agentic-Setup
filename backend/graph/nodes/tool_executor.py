@@ -12,7 +12,8 @@ from tools import ALL_TOOLS
 
 @lru_cache(maxsize=1)
 def get_tool_executor_node() -> ToolNode:
-    return ToolNode(ALL_TOOLS)
+    # ToolNode is the canonical agentic executor for supervisor-selected tool calls.
+    return ToolNode(ALL_TOOLS, handle_tool_errors=True)
 
 
 def _coerce_tool_payload(message: ToolMessage) -> dict:
@@ -29,8 +30,9 @@ def _coerce_tool_payload(message: ToolMessage) -> dict:
     return {}
 
 
-async def tool_executor_node(state: AgentState) -> dict:
-    result = await get_tool_executor_node().ainvoke(state)
+async def tool_executor_node(state: AgentState, config=None) -> dict:
+    # Important: forward runtime config from graph execution to avoid missing runtime keys.
+    result = await get_tool_executor_node().ainvoke(state, config=config)
     updates: dict = {}
 
     for message in result.get("messages", []):

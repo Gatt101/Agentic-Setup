@@ -22,6 +22,8 @@ Rules:
 10. Keep final clinical response concise and medically safe.
 """
 
+NON_VISION_TOOLS = [tool for tool in ALL_TOOLS if not tool.name.startswith("vision_")]
+
 
 def _tool_to_agent(tool_name: str | None) -> str | None:
     if not tool_name:
@@ -38,7 +40,9 @@ def _tool_to_agent(tool_name: str | None) -> str | None:
 
 
 async def supervisor_node(state: AgentState) -> dict:
-    llm = get_supervisor_llm().bind_tools(ALL_TOOLS)
+    has_image_data = bool(state.get("image_data"))
+    toolset = ALL_TOOLS if has_image_data else NON_VISION_TOOLS
+    llm = get_supervisor_llm().bind_tools(toolset)
 
     messages = list(state.get("messages", []))
     if not messages and state.get("user_message"):
@@ -52,8 +56,15 @@ async def supervisor_node(state: AgentState) -> dict:
             else "No tools have been called yet in this run."
         )
     )
+    image_context = SystemMessage(
+        content=(
+            "Valid image data is available for vision analysis."
+            if has_image_data
+            else "No valid image data is available in this turn. Do not call any vision_* tools."
+        )
+    )
 
-    prompt_messages = [SystemMessage(content=SUPERVISOR_PROMPT), safety_context, *messages]
+    prompt_messages = [SystemMessage(content=SUPERVISOR_PROMPT), safety_context, image_context, *messages]
 
     response = await llm.ainvoke(prompt_messages)
     called = [call.get("name", "") for call in getattr(response, "tool_calls", []) if call.get("name")]

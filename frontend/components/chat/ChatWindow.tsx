@@ -9,7 +9,7 @@ import {
 } from "@/components/ai-elements/conversation";
 import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
 import { Card } from "@/components/ui/card";
-import { useChat } from "@/hooks/useChat";
+import { type ChatAttachment, useChat } from "@/hooks/useChat";
 import { MessageCircleIcon } from "lucide-react";
 import { useMemo } from "react";
 
@@ -66,9 +66,12 @@ async function blobUrlToDataUrl(url: string): Promise<string | null> {
 
 async function pickAttachmentPayload(
   files: PromptInputMessage["files"]
-): Promise<string | null> {
+): Promise<{ payload: string | null; preview: ChatAttachment | null }> {
   if (files.length === 0) {
-    return null;
+    return {
+      payload: null,
+      preview: null,
+    };
   }
 
   const preferredFile =
@@ -78,19 +81,51 @@ async function pickAttachmentPayload(
         (file.mediaType.startsWith("image/") || isSupportedDocType(file.mediaType))
     ) ?? files[0];
 
+  const name =
+    typeof preferredFile.filename === "string" && preferredFile.filename.trim()
+      ? preferredFile.filename
+      : "Attachment";
+
   if (typeof preferredFile.url !== "string") {
-    return null;
+    return {
+      payload: null,
+      preview: {
+        mediaType: preferredFile.mediaType,
+        name,
+      },
+    };
   }
 
   if (preferredFile.url.startsWith("data:")) {
-    return preferredFile.url;
+    return {
+      payload: preferredFile.url,
+      preview: {
+        dataUrl: preferredFile.url,
+        mediaType: preferredFile.mediaType,
+        name,
+      },
+    };
   }
 
   if (preferredFile.url.startsWith("blob:")) {
-    return await blobUrlToDataUrl(preferredFile.url);
+    const dataUrl = await blobUrlToDataUrl(preferredFile.url);
+    return {
+      payload: dataUrl,
+      preview: {
+        dataUrl: dataUrl ?? undefined,
+        mediaType: preferredFile.mediaType,
+        name,
+      },
+    };
   }
 
-  return null;
+  return {
+    payload: null,
+    preview: {
+      mediaType: preferredFile.mediaType,
+      name,
+    },
+  };
 }
 
 export function ChatWindow({ mode }: ChatWindowProps) {
@@ -99,9 +134,10 @@ export function ChatWindow({ mode }: ChatWindowProps) {
   });
 
   const handleSend = async (message: PromptInputMessage) => {
-    const attachment = await pickAttachmentPayload(message.files);
+    const attachmentSelection = await pickAttachmentPayload(message.files);
     void sendMessage({
-      attachment,
+      attachment: attachmentSelection.payload,
+      attachmentMeta: attachmentSelection.preview,
       text: message.text,
     });
   };
@@ -125,6 +161,7 @@ export function ChatWindow({ mode }: ChatWindowProps) {
             ) : (
               messages.map((message) => (
                 <MessageBubble
+                  attachment={message.attachment}
                   content={message.content}
                   key={message.id}
                   role={message.role}

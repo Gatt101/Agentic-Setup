@@ -4,13 +4,21 @@ import { useCallback, useRef, useState } from "react";
 
 export type ChatRole = "assistant" | "user";
 
+export type ChatAttachment = {
+  dataUrl?: string;
+  mediaType?: string;
+  name: string;
+};
+
 export type ChatMessage = {
+  attachment?: ChatAttachment;
   content: string;
   id: string;
   role: ChatRole;
 };
 
 type ChatApiResponse = {
+  detail?: string;
   final_response?: string;
   session_id?: string;
 };
@@ -21,12 +29,19 @@ type UseChatOptions = {
 
 type SendMessageInput = {
   attachment?: string | null;
+  attachmentMeta?: ChatAttachment | null;
   text: string;
 };
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api";
-const CHAT_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_CHAT_TIMEOUT_MS ?? 20000);
+const RAW_CHAT_TIMEOUT_MS = Number(
+  process.env.NEXT_PUBLIC_CHAT_TIMEOUT_MS ?? 60000
+);
+const CHAT_TIMEOUT_MS =
+  Number.isFinite(RAW_CHAT_TIMEOUT_MS) && RAW_CHAT_TIMEOUT_MS > 0
+    ? Math.max(30000, RAW_CHAT_TIMEOUT_MS)
+    : 60000;
 
 function createMessageId(prefix: string): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -61,9 +76,9 @@ export function useChat({ openingMessage }: UseChatOptions) {
   }, []);
 
   const sendMessage = useCallback(
-    async ({ text: rawText, attachment }: SendMessageInput) => {
+    async ({ text: rawText, attachment, attachmentMeta }: SendMessageInput) => {
       const text = rawText.trim();
-      const hasAttachment = Boolean(attachment);
+      const hasAttachment = Boolean(attachment || attachmentMeta);
 
       if ((!text && !hasAttachment) || isLoading) {
         return;
@@ -75,6 +90,7 @@ export function useChat({ openingMessage }: UseChatOptions) {
       setMessages((previous) => [
         ...previous,
         {
+          attachment: attachmentMeta ?? undefined,
           content: userMessage,
           id: createMessageId("user"),
           role: "user",
@@ -106,7 +122,16 @@ export function useChat({ openingMessage }: UseChatOptions) {
         });
 
         if (!response.ok) {
-          throw new Error(`Request failed with status ${response.status}`);
+          let errorMessage = `Request failed with status ${response.status}`;
+          try {
+            const errorPayload = (await response.json()) as ChatApiResponse;
+            if (typeof errorPayload.detail === "string" && errorPayload.detail.trim()) {
+              errorMessage = errorPayload.detail.trim();
+            }
+          } catch {
+            // Ignore parse failure and keep status-based message.
+          }
+          throw new Error(errorMessage);
         }
 
         const payload = (await response.json()) as ChatApiResponse;
@@ -121,7 +146,9 @@ export function useChat({ openingMessage }: UseChatOptions) {
         const fallback =
           errorValue instanceof DOMException && errorValue.name === "AbortError"
             ? "The request timed out. Please try again."
-            : "Chat request failed. Please try again.";
+            : errorValue instanceof Error && errorValue.message.trim()
+              ? errorValue.message
+              : "Chat request failed. Please try again.";
         setError(fallback);
         appendAssistantMessage(fallback);
       } finally {
