@@ -51,6 +51,7 @@ class Settings(BaseSettings):
 
     # API
     cors_allow_origins: str = "*"
+    chat_request_timeout_seconds: int = 45
 
     project_root: Path = Field(default_factory=lambda: Path(__file__).resolve().parents[1])
 
