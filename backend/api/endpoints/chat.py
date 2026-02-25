@@ -151,6 +151,12 @@ def _agent_error_message(detail: str) -> str:
             "Please verify server environment variables."
         )
 
+    if "400" in normalized or "bad request" in normalized or "invalid" in normalized:
+        return (
+            "The AI provider rejected the request due to a formatting issue. "
+            "Please start a new chat session."
+        )
+
     return (
         "I hit an internal processing issue and could not complete this request. "
         "Please retry in a moment."

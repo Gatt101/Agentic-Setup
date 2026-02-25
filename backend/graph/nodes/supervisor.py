@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from loguru import logger
 
 from graph.state import AgentState
@@ -211,6 +211,24 @@ async def supervisor_node(state: AgentState) -> dict:
     if not messages and state.get("user_message"):
         messages = [HumanMessage(content=state["user_message"])]
 
+    # Truncate history to last 10 messages to avoid blowing up TPM limits.
+    # _build_pipeline_context already injects all structured clinical state
+    # (diagnosis, triage, detections, etc.) as a SystemMessage so the LLM
+    # does NOT need the verbose old tool-result blobs.
+    MAX_HISTORY = 10
+    if len(messages) > MAX_HISTORY:
+        messages = messages[-MAX_HISTORY:]
+
+    # Strip all AIMessages-with-tool-calls and ToolMessages from history.
+    # These can carry tool_call IDs exceeding OpenAI's 40-char limit, and they
+    # add no value since PIPELINE STATUS already contains all structured state.
+    # Only keep plain human/assistant conversational messages.
+    messages = [
+        msg for msg in messages
+        if not (isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None))
+        and not isinstance(msg, ToolMessage)
+    ]
+
     safety_context = SystemMessage(
         content=(
             "Already-called tools in this run: "
@@ -232,11 +250,14 @@ async def supervisor_node(state: AgentState) -> dict:
 
     forced_call = _forced_tool_call(state)
     if forced_call:
+        # OpenAI hard limit: tool_call id must be <= 40 chars
+        raw_id = f"fc_{iteration}_{forced_call['name']}"
+        forced_id = raw_id[:40]
         response = AIMessage(
             content="",
             tool_calls=[
                 {
-                    "id": f"forced_{iteration}_{forced_call['name']}",
+                    "id": forced_id,
                     "type": "tool_call",
                     "name": forced_call["name"],
                     "args": forced_call["args"],

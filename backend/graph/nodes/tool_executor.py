@@ -193,10 +193,12 @@ def _inject_state_into_report_calls(state: AgentState) -> AgentState:
             if not isinstance(merged.get("images"), dict):
                 merged["images"] = {"annotated_image_url": report_url or ""}
             if not isinstance(merged.get("metadata"), dict):
+                _sid = str(state.get("session_id") or "")
+                _study_id = f"OA-{_sid[:8].upper()}" if _sid else "OA-UNKNOWN"
                 merged["metadata"] = {
                     "patient_id": patient_id,
                     "body_part": body_part,
-                    "study_id": str(state.get("session_id") or "unknown"),
+                    "study_id": _study_id,
                     "doctor_name": actor_name,
                     "actor_name": actor_name,
                 }
@@ -209,11 +211,13 @@ def _inject_state_into_report_calls(state: AgentState) -> AgentState:
                 merged["diagnosis"] = diagnosis
             if not isinstance(merged.get("triage"), dict):
                 merged["triage"] = triage
+            if not isinstance(merged.get("detections"), list):
+                merged["detections"] = detections
             if not isinstance(merged.get("metadata"), dict):
                 merged["metadata"] = {
                     "patient_id": _enriched_pi.get("patient_id", patient_id),
                     "body_part": body_part,
-                    "study_id": str(state.get("session_id") or "unknown"),
+                    "study_id": f"OA-{str(state.get('session_id') or '')[:8].upper()}" or "OA-UNKNOWN",
                     "doctor_name": actor_name if actor_role == "doctor" else _enriched_pi.get("doctor", ""),
                     "actor_name": actor_name,
                     "patient_name": _enriched_pi.get("name", ""),
