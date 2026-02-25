@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query
 from langchain_core.messages import AIMessage, HumanMessage
+from loguru import logger
 
 from api.schemas.requests import ChatRequest, ChatSessionCreateRequest, DoctorPatientAssignRequest
 from api.schemas.responses import AgentResponse, ChatMessageRecord, ChatSessionCreateResponse, ChatSessionSummary
@@ -77,12 +78,14 @@ def _extract_latest_image_data(history: list[dict]) -> str | None:
 
 
 def _extract_patient_info(history: list[dict], current_message: str, patient_id: str) -> dict[str, Any]:
-    merged_text = "\n".join(
-        [
-            *(str(item.get("content") or "") for item in history[-24:]),
-            current_message,
-        ]
+    # Only search USER messages — AI messages contain field labels like
+    # "Full name / Age / Gender" which poison the regex (e.g. name→"Age").
+    user_history_text = "\n".join(
+        str(item.get("content") or "")
+        for item in history[-24:]
+        if str(item.get("sender_role") or "") == "user"
     )
+    merged_text = user_history_text + "\n" + current_message
 
     info: dict[str, Any] = {"patient_id": patient_id}
 
@@ -359,6 +362,10 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
     if image_data is None:
         image_data = _extract_latest_image_data(history_before)
 
+    # When the user sends a fresh image, they are starting a new analysis —
+    # clear any pending report flag so we don't immediately ask for patient info.
+    _clear_pending_on_fresh = fresh_image
+
     if attachment_kind == "document_or_other":
         message = (
             f"{request.message}\n\n"
@@ -392,8 +399,33 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
     # ── Load persisted clinical pipeline state from previous turns ────────────
     pipeline_state = await chat_store.get_pipeline_state(chat_id)
     stored_patient_info: dict = pipeline_state.pop("patient_info", {}) or {}
+
+    # Detect whether this message is an analysis request (not a report request)
+    _msg_lower = message.lower().strip()
+    _ANALYSIS_KEYWORDS = ("analys", "detect", "fracture", "scan", "xray", "x-ray",
+                          "check", "examine", "look at", "diagnos", "assess")
+    _REPORT_KEYWORDS = ("report", "pdf", "document")
+    _is_analysis_request = (
+        any(k in _msg_lower for k in _ANALYSIS_KEYWORDS)
+        and not any(k in _msg_lower for k in _REPORT_KEYWORDS)
+    )
+
+    # Clear pending report flag when:
+    #   a) user sent a fresh image (new analysis session), OR
+    #   b) user message is an analysis request (not a report request)
+    if _clear_pending_on_fresh or _is_analysis_request:
+        logger.info("chat_id={} clearing pending_report + clinical state (fresh_image={} analysis_keyword={})",
+                    chat_id, fresh_image, _is_analysis_request)
+        pipeline_state["pending_report_actor_role"] = None
+        # Wipe stale clinical data so the pipeline restarts cleanly
+        for _stale_key in ("diagnosis", "triage_result", "body_part", "detections", "report_url"):
+            pipeline_state.pop(_stale_key, None)
+
     # Merge persisted patient_info with freshly-extracted one (fresh extraction wins for present fields)
     merged_patient_info = {**stored_patient_info, **{k: v for k, v in patient_info.items() if v}}
+
+    logger.info("chat_id={} actor_role={} fresh_image={} patient_info_keys={}",
+                chat_id, actor_role, fresh_image, list(merged_patient_info.keys()))
 
     payload = {
         "session_id": chat_id,
@@ -409,12 +441,14 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
         **pipeline_state,
     }
 
+    logger.info("chat_id={} invoking agent", chat_id)
     try:
         result = await asyncio.wait_for(
             run_agent(payload),
             timeout=max(5, settings.chat_request_timeout_seconds),
         )
     except asyncio.TimeoutError:
+        logger.warning("chat_id={} agent timed out after {}s", chat_id, settings.chat_request_timeout_seconds)
         raise HTTPException(status_code=504, detail="Chat request timed out.")
     except AgentExecutionError as exc:
         raise HTTPException(status_code=500, detail=_agent_error_message(str(exc))) from exc

@@ -1,9 +1,9 @@
 "use client";
 
 import {
-  Message,
-  MessageContent,
-  MessageResponse,
+    Message,
+    MessageContent,
+    MessageResponse,
 } from "@/components/ai-elements/message";
 import type { AgentTraceStep, ChatAttachment } from "@/hooks/useChat";
 import { cn } from "@/lib/utils";
@@ -14,12 +14,13 @@ import { AttachmentPreview } from "./AttachmentPreview";
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api";
 
 function extractReportUrl(text: string): string | null {
-  const match = text.match(/Report:\s*(\/reports\/[^\s]+\.pdf)/i);
+  // Match both relative (/reports/xxx.pdf) and absolute (https://...) report URLs
+  const match = text.match(/Report:\s*((?:\/reports\/\S+\.pdf)|(?:https?:\/\/\S+))/i);
   return match ? match[1] : null;
 }
 
 function stripReportLine(text: string): string {
-  return text.replace(/\n*Report:\s*\/reports\/[^\s]+\.pdf/i, "").trimEnd();
+  return text.replace(/\n*Report:\s*(?:\/reports\/\S+\.pdf|https?:\/\/\S+)/i, "").trimEnd();
 }
 
 export type ChatRole = "assistant" | "user";
@@ -69,7 +70,7 @@ export function MessageBubble({ attachment, content, role, trace }: MessageBubbl
           ) : null}
           {reportUrl ? (
             <a
-              href={`${API_BASE_URL.replace(/\/api$/, "")}${reportUrl}`}
+              href={reportUrl.startsWith("http") ? reportUrl : `${API_BASE_URL.replace(/\/api$/, "")}${reportUrl}`}
               target="_blank"
               rel="noopener noreferrer"
               download

@@ -19,29 +19,21 @@ PIPELINE RULES:
 5. clinical_assess_triage requires diagnosis.
 6. If triage is RED or AMBER, hospital_find_nearby_hospitals is required.
 7. For text-only questions, use knowledge_* tools.
-8. Generate report PDFs ONLY when user explicitly asks for report/document.
+8. Generate report PDFs ONLY when user explicitly asks for report/document/PDF.
 9. Never call the same tool repeatedly with identical context.
 10. Keep final clinical response concise and medically safe.
 11. CRITICAL: Do NOT ask the user for information obtainable from tools.
+12. CRITICAL: NEVER ask for patient name/age/gender UNLESS the user has explicitly asked for a report or PDF IN THEIR CURRENT MESSAGE. Analysis requests do NOT need patient info.
+13. CRITICAL: When the vision+clinical pipeline is complete (diagnosis and triage both present) and the user has NOT asked for a report, respond with a clear summary of the findings. Do NOT ask for any extra information.
 
-=== MANDATORY CHECKS BEFORE ANY REPORT TOOL CALL ===
-ALWAYS check the PIPELINE STATUS block. Before calling ANY report_generate_* tool:
-
-CHECK 1 — PATIENT INFO:
-  If 'Patient Info Missing' appears in PIPELINE STATUS, you MUST ask for missing fields.
-  Ask in ONE message: "Before I generate your report, I need a few details:\n- Full name\n- Age\n- Gender\nPlease share these."
+=== REPORT GATE (ONLY applies when user explicitly says \"report\", \"PDF\", or \"document\") ===
+If PIPELINE STATUS shows \"Report patient info needed\" AND the user demanded a report THIS turn:
+  Ask in ONE message: \"Before I generate your report, I need a few details:\n- Full name\n- Age\n- Gender\nPlease share these.\"
   Do NOT call any report tool until all of name, age, and gender are confirmed.
 
-CHECK 2 — DOCTOR REPORT TYPE (only if actor_role = doctor):
-  If doctor has not specified report type in their message, you MUST ask:
-  "Which type of report would you like?\n1. **Quick Summary Report** — concise, same readable format as patient report\n2. **Full Clinical Report** — detailed findings, differentials, severity scores, sign-off block\nPlease reply with 1 or 2, or say \"summary\" / \"full\"."
-  Only call report_generate_clinician_simple_pdf if they chose summary/quick/1.
-  Only call report_generate_clinician_pdf if they chose full/clinical/2.
-
 === REPORT ROUTING ===
-  actor_role = patient → report_generate_patient_pdf
-  actor_role = doctor + full/clinical/2 chosen → report_generate_clinician_pdf
-  actor_role = doctor + summary/quick/1 chosen → report_generate_clinician_simple_pdf
+  actor_role = patient \u2192 report_generate_patient_pdf
+  actor_role = doctor \u2192 report_generate_clinician_simple_pdf
   Always inject doctor_name from actor_name into metadata when actor_role is doctor.
 """
 
@@ -83,14 +75,18 @@ def _build_pipeline_context(state: AgentState) -> str:
     else:
         lines.append("Triage: NOT YET")
 
-    # Patient info completeness
+    # Patient info — only surface this label when a report is likely needed,
+    # so the LLM does NOT ask proactively during a plain analysis turn.
     pi = state.get("patient_info") or {}
     missing_fields = [f for f in ("name", "age", "gender") if not (pi.get(f))]
-    if missing_fields:
-        lines.append(f"Patient Info Missing: {', '.join(missing_fields)}")
+    report_stage = bool(state.get("pending_report_actor_role")) or _report_requested(state)
+    if missing_fields and report_stage:
+        lines.append(f"Report patient info needed: {', '.join(missing_fields)}")
+    elif missing_fields:
+        lines.append("Patient info: not yet collected (only needed for report generation)")
     else:
         name = pi.get("name") or ""
-        lines.append(f"Patient Info: complete (name={name})")
+        lines.append(f"Patient info: complete (name={name})")
 
     if state.get("report_url"):
         lines.append(f"Report URL: {state['report_url']}")
@@ -112,16 +108,8 @@ def _patient_info_complete(state: AgentState) -> bool:
 
 
 def _doctor_report_type_clear(state: AgentState) -> str | None:
-    """Return tool name if message clearly specifies report type, else None."""
-    msg = str(state.get("user_message") or "").lower().strip()
-    full_keywords = ("full", "clinical", "detail", "depth", "complete", "comprehensive", "2")
-    simple_keywords = ("summary", "quick", "simple", "simplified", "brief", "short", "1")
-    # Exact match for single digit to avoid "12" or "21" triggering
-    if msg == "2" or any(k in msg for k in full_keywords if len(k) > 1):
-        return "report_generate_clinician_pdf"
-    if msg == "1" or any(k in msg for k in simple_keywords if len(k) > 1):
-        return "report_generate_clinician_simple_pdf"
-    return None
+    """Always use the summary/simple report for doctors — full clinical report is disabled."""
+    return "report_generate_clinician_simple_pdf"
 
 
 def _tool_to_agent(tool_name: str | None) -> str | None:
@@ -183,6 +171,14 @@ def _forced_tool_call(state: AgentState) -> dict | None:
 
         if report_this_turn or pending_role:
             actor_role = str(state.get("actor_role") or pending_role or "patient").lower()
+
+            # Guard: don't retry a report tool that already ran (prevents infinite loops)
+            report_tools_attempted = [
+                t for t in state.get("tool_calls_made", [])
+                if t in {"report_generate_patient_pdf", "report_generate_clinician_pdf", "report_generate_clinician_simple_pdf"}
+            ]
+            if report_tools_attempted:
+                return None  # already attempted, let graph route to response_builder
 
             # Gate 1: patient info must be complete
             if not _patient_info_complete(state):
@@ -287,7 +283,17 @@ async def supervisor_node(state: AgentState) -> dict:
             actor_role = str(state.get("actor_role") or "patient").lower()
             pi = state.get("patient_info") or {}
             missing_fields = [f for f in ("name", "age", "gender") if not str(pi.get(f) or "").strip()]
-            if missing_fields and actor_role == "patient":
+            # Block retry: if any report tool already ran (success or fail), don't let LLM call it again.
+            _already_ran_report = any(t in _REPORT_TOOLS for t in state.get("tool_calls_made", []))
+            if _already_ran_report:
+                response = AIMessage(
+                    content=(
+                        "I attempted to generate the report but encountered a processing issue. "
+                        "The analysis data may be incomplete — please retry by re-uploading the X-ray "
+                        "and running a fresh analysis, then request the report again."
+                    )
+                )
+            elif missing_fields and actor_role == "patient":
                 missing_fields_list = "name" if "name" in missing_fields else ""
                 if "age" in missing_fields: missing_fields_list += (", age" if missing_fields_list else "age")
                 if "gender" in missing_fields: missing_fields_list += (", gender" if missing_fields_list else "gender")
@@ -304,15 +310,7 @@ async def supervisor_node(state: AgentState) -> dict:
                         f"**{', '.join(missing_fields)}** so the report is complete."
                     )
                 )
-            elif actor_role == "doctor" and not _doctor_report_type_clear(state):
-                response = AIMessage(
-                    content=(
-                        "Which type of report would you like?\n"
-                        "1. **Quick Summary Report** \u2014 concise, same readable format as patient report\n"
-                        "2. **Full Clinical Report** \u2014 detailed findings, differentials, severity scores, sign-off block\n"
-                        "Please reply with **1** or **2**, or say *summary* / *full*."
-                    )
-                )
+            # (Full clinical report option removed — doctor always gets summary report)
         # ── Set pending_report flag when gating so next turn auto-triggers report ──
         _pending_flag_update: str | None = state.get("pending_report_actor_role")
         _gated_response = getattr(response, "tool_calls", None) is None or len(getattr(response, "tool_calls", [])) == 0
