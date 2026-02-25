@@ -14,6 +14,7 @@ from services.storage import storage_service
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ARG001
     logger.info("OrthoAssist backend starting up...")
+    logger.info("Environment: {} | Base URL: {}", settings.app_env, settings.resolved_server_base_url)
     await storage_service.initialize()
     await mongo_service.initialize()
     logger.info("OrthoAssist startup complete. Storage and MongoDB ready.")

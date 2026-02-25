@@ -8,10 +8,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    # Environment: "dev" or "production"
+    app_env: str = "dev"
+
     # Server
     host: str = "0.0.0.0"
     port: int = 8000
     debug: bool = False
+
+    # Base URL of this backend (auto-derived from app_env when not set)
+    server_base_url: str = ""
 
     # OpenAI
     openai_api_key: str = ""
@@ -86,6 +92,20 @@ class Settings(BaseSettings):
         if not leg_model.is_absolute():
             leg_model = self.project_root / leg_model
         return leg_model.resolve()
+
+    @property
+    def is_production(self) -> bool:
+        return self.app_env.lower() in ("production", "prod")
+
+    @property
+    def resolved_server_base_url(self) -> str:
+        """Return the backend base URL. Uses explicit server_base_url if set,
+        otherwise derives it from app_env."""
+        if self.server_base_url:
+            return self.server_base_url.rstrip("/")
+        if self.is_production:
+            return f"https://{self.host}:{self.port}"
+        return f"http://localhost:{self.port}"
 
     @property
     def cors_origins(self) -> list[str]:

@@ -55,3 +55,25 @@ export type NearbyCareCenter = {
   waitEstimate: string;
 };
 
+export type NearbyCareCenterLive = {
+  id: string;
+  name: string;
+  specialty: string;
+  distanceKm: number;
+  address: string;
+  phone: string | null;
+  website: string | null;
+  latitude: number;
+  longitude: number;
+  openingHours: string | null;
+  rating: number | null;
+};
+
+export type NearbyResponse = {
+  centers: NearbyCareCenterLive[];
+  locationUsed: "gps" | "ip" | "default";
+  latitude: number;
+  longitude: number;
+  radiusKm: number;
+};
+
