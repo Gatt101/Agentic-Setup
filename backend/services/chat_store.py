@@ -172,7 +172,7 @@ class ChatStore:
         """Persist diagnosis, triage, body_part, detections, patient_info per session."""
         await self.ensure_enabled()
         fields: dict[str, Any] = {"pipeline_state_updated_at": _now()}
-        for key in ("diagnosis", "triage_result", "body_part", "detections", "patient_info"):
+        for key in ("diagnosis", "triage_result", "body_part", "detections", "patient_info", "mongo_patient_id"):
             if key in state and state[key] is not None:
                 fields[f"pipeline_{key}"] = state[key]
         # pending_report_actor_role must always be written (None explicitly clears it)
@@ -196,12 +196,13 @@ class ChatStore:
                 "pipeline_detections": 1,
                 "pipeline_patient_info": 1,
                 "pipeline_pending_report_actor_role": 1,
+                "pipeline_mongo_patient_id": 1,
             },
         )
         if not row:
             return {}
         out: dict[str, Any] = {}
-        for key in ("diagnosis", "triage_result", "body_part", "detections", "patient_info", "pending_report_actor_role"):
+        for key in ("diagnosis", "triage_result", "body_part", "detections", "patient_info", "pending_report_actor_role", "mongo_patient_id"):
             val = row.get(f"pipeline_{key}")
             if val is not None:
                 out[key] = val

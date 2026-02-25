@@ -1,8 +1,9 @@
 import { getPatientReports } from "@/lib/data/loaders";
-import { FileTextIcon } from "lucide-react";
+import { auth } from "@clerk/nextjs/server";
 
 export default async function PatientReportsPage() {
-  const reports = await getPatientReports();
+  const { userId } = await auth();
+  const reports = await getPatientReports(userId ?? undefined);
 
   return (
     <main className="space-y-4 p-6">
@@ -34,15 +35,6 @@ export default async function PatientReportsPage() {
             <p className="text-sm text-slate-700 dark:text-slate-300">
               Severity: <span className="font-medium">{report.severity}</span>
             </p>
-            <a
-              href={`${process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/api$/, "") ?? "http://localhost:8000"}/reports/${report.id}.pdf`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-primary)]/30 bg-[var(--color-primary)]/10 px-3 py-2 text-sm font-medium text-[var(--color-primary)] transition-colors hover:bg-[var(--color-primary)]/20 dark:border-[var(--color-primary)]/40 dark:bg-[var(--color-primary)]/15 dark:hover:bg-[var(--color-primary)]/25"
-            >
-              <FileTextIcon className="size-4" />
-              View Report
-            </a>
           </article>
         ))}
       </div>

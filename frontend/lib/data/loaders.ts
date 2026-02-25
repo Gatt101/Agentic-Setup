@@ -1,16 +1,17 @@
 import { doctorDashboardMockData } from "@/lib/mock-data/doctor-dashboard";
 import { nearbyCareMockData } from "@/lib/mock-data/nearby-care";
+import { doctorPatientsMockData } from "@/lib/mock-data/patients";
 import {
-  doctorReportsMockData,
-  patientReportsMockData,
+    doctorReportsMockData,
+    patientReportsMockData,
 } from "@/lib/mock-data/reports";
 
 import { DATA_SOURCE_MODE, USE_MOCK_DATA } from "./mode";
 import type {
-  DoctorDashboardData,
-  NearbyCareCenter,
-  PatientRecord,
-  ReportRecord,
+    DoctorDashboardData,
+    NearbyCareCenter,
+    PatientRecord,
+    ReportRecord,
 } from "./types";
 
 type MetricsResponse = {
@@ -65,26 +66,73 @@ export async function getDoctorDashboardData(): Promise<DoctorDashboardData> {
   }
 }
 
-export async function getDoctorPatients(doctorId: string): Promise<PatientRecord[]> {
+export async function getDoctorPatients(actorId?: string): Promise<PatientRecord[]> {
+  // Always keep mock data wired; switch to real data by setting NEXT_PUBLIC_DATA_SOURCE=api
+  if (USE_MOCK_DATA || !actorId) {
+    return cloneData(doctorPatientsMockData);
+  }
+
   try {
-    const patients = await fetchApi<PatientRecord[]>(
-      `/patients?actor_id=${encodeURIComponent(doctorId)}&actor_role=doctor`
-    );
-    return patients;
+    const params = new URLSearchParams({ actor_id: actorId, actor_role: "doctor" });
+    const raw = await fetchApi<Record<string, unknown>[]>(`/patients?${params}`);
+    return raw.map((p) => ({
+      id: String(p.id ?? ""),
+      name: String(p.name ?? "Unknown"),
+      age: Number(p.age ?? 0),
+      lastStudy: String(p.lastStudy ?? ""),
+      riskLevel: (["RED", "AMBER", "GREEN"].includes(String(p.riskLevel)) ? p.riskLevel : "GREEN") as PatientRecord["riskLevel"],
+      summary: String(p.summary ?? ""),
+    }));
   } catch {
-    return [];
+    // fallback to mock on API error so the UI never breaks
+    return cloneData(doctorPatientsMockData);
   }
 }
 
-export async function getDoctorReports(): Promise<ReportRecord[]> {
-  return cloneData(doctorReportsMockData);
+export async function getDoctorReports(actorId?: string): Promise<ReportRecord[]> {
+  // Always keep mock data wired; switch to real data by setting NEXT_PUBLIC_DATA_SOURCE=api
+  if (USE_MOCK_DATA || !actorId) {
+    return cloneData(doctorReportsMockData);
+  }
+
+  try {
+    const params = new URLSearchParams({ actor_id: actorId, actor_role: "doctor" });
+    const raw = await fetchApi<Record<string, unknown>[]>(`/reports/list?${params}`);
+    return raw.map((r) => ({
+      id: String(r.id ?? ""),
+      patientName: String(r.patientName ?? "Unknown"),
+      title: String(r.title ?? "Report"),
+      severity: (["RED", "AMBER", "GREEN"].includes(String(r.severity)) ? r.severity : "GREEN") as ReportRecord["severity"],
+      status: (["draft", "reviewing", "finalized"].includes(String(r.status)) ? r.status : "finalized") as ReportRecord["status"],
+      createdAt: String(r.createdAt ?? new Date().toISOString()),
+    }));
+  } catch {
+    return cloneData(doctorReportsMockData);
+  }
 }
 
-export async function getPatientReports(): Promise<ReportRecord[]> {
-  return cloneData(patientReportsMockData);
+export async function getPatientReports(actorId?: string): Promise<ReportRecord[]> {
+  // Always keep mock data wired; switch to real data by setting NEXT_PUBLIC_DATA_SOURCE=api
+  if (USE_MOCK_DATA || !actorId) {
+    return cloneData(patientReportsMockData);
+  }
+
+  try {
+    const params = new URLSearchParams({ actor_id: actorId, actor_role: "patient" });
+    const raw = await fetchApi<Record<string, unknown>[]>(`/reports/list?${params}`);
+    return raw.map((r) => ({
+      id: String(r.id ?? ""),
+      patientName: String(r.patientName ?? "You"),
+      title: String(r.title ?? "Report"),
+      severity: (["RED", "AMBER", "GREEN"].includes(String(r.severity)) ? r.severity : "GREEN") as ReportRecord["severity"],
+      status: (["draft", "reviewing", "finalized"].includes(String(r.status)) ? r.status : "finalized") as ReportRecord["status"],
+      createdAt: String(r.createdAt ?? new Date().toISOString()),
+    }));
+  } catch {
+    return cloneData(patientReportsMockData);
+  }
 }
 
 export async function getNearbyCareCenters(): Promise<NearbyCareCenter[]> {
   return cloneData(nearbyCareMockData);
 }
-

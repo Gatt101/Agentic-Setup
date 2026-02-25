@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from langchain_core.messages import AIMessage
+from loguru import logger
 
 from graph.state import AgentState
 
@@ -10,44 +11,179 @@ def _report_requested(state: AgentState) -> bool:
     return any(keyword in text for keyword in ("report", "pdf", "document"))
 
 
+# Keywords that indicate the LLM returned a useless "please upload" type message
+# instead of actual analysis — we discard these when structured data is available.
+_STALE_LLM_PHRASES = (
+    "please upload",
+    "upload the image",
+    "upload an image",
+    "upload a scan",
+    "provide an image",
+    "share the image",
+    "no image",
+    "i need an image",
+    "i need the image",
+)
+
+_REPORT_TOOLS = {
+    "report_generate_patient_pdf",
+    "report_generate_clinician_pdf",
+    "report_generate_clinician_simple_pdf",
+}
+_ANALYSIS_TOOLS = {
+    "clinical_generate_diagnosis",
+    "clinical_assess_triage",
+}
+
+
 def _last_non_tool_ai_message(state: AgentState) -> str | None:
+    diagnosis = state.get("diagnosis")
+    triage = state.get("triage_result")
+    pipeline_has_results = bool(diagnosis) and bool(triage)
+
     for message in reversed(state.get("messages", [])):
         if isinstance(message, AIMessage) and not getattr(message, "tool_calls", None):
             content = message.content
             if isinstance(content, str):
-                return content
-            if isinstance(content, list):
+                text = content.strip()
+            elif isinstance(content, list):
                 parts = [part.get("text", "") for part in content if isinstance(part, dict)]
-                return " ".join(part for part in parts if part).strip() or None
+                text = " ".join(part for part in parts if part).strip()
+            else:
+                continue
+
+            if not text:
+                continue
+
+            # If pipeline already produced structured results, discard stale LLM
+            # messages that ask the user to upload an image — they are artifacts
+            # from the supervisor running one extra iteration after the pipeline.
+            if pipeline_has_results and any(phrase in text.lower() for phrase in _STALE_LLM_PHRASES):
+                logger.debug("response_builder: discarding stale LLM message: {:.80}", text)
+                continue
+
+            return text
     return None
+
+
+def _severity_emoji(severity: str) -> str:
+    s = severity.lower()
+    if s in ("high", "severe", "critical"):
+        return "🔴"
+    if s in ("moderate", "medium"):
+        return "🟡"
+    return "🟢"
+
+
+def _triage_label(level: str) -> str:
+    l = level.upper()
+    if l == "RED":
+        return "🔴 RED — Immediate attention required"
+    if l == "AMBER":
+        return "🟡 AMBER — Urgent — seek care within 24 hours"
+    if l == "GREEN":
+        return "🟢 GREEN — Routine — arrange follow-up"
+    return level
 
 
 async def response_builder_node(state: AgentState) -> dict:
     if state.get("final_response"):
         return {}
 
-    ai_message = _last_non_tool_ai_message(state)
-    if ai_message:
-        return {"final_response": ai_message}
-
     diagnosis = state.get("diagnosis")
     triage = state.get("triage_result")
     hospitals = state.get("hospitals")
     report_url = state.get("report_url")
+    tool_calls_made = [str(name) for name in (state.get("tool_calls_made") or [])]
+    report_generated_this_turn = bool(report_url) and any(name in _REPORT_TOOLS for name in tool_calls_made)
+    analysis_generated_this_turn = any(name in _ANALYSIS_TOOLS for name in tool_calls_made)
 
-    if diagnosis:
-        response = f"Finding: {diagnosis.get('finding', 'N/A')} (severity: {diagnosis.get('severity', 'N/A')})."
-        if triage:
-            response += f" Triage level is {triage.get('level', 'N/A')}."
+    # If report generation happened using prior analysis, don't repeat analysis blocks.
+    if report_generated_this_turn and not analysis_generated_this_turn:
+        return {"final_response": "Your PDF report is ready. Use the download button below."}
+
+    # If report already exists and user asks for it again, keep response concise.
+    if report_url and _report_requested(state) and not analysis_generated_this_turn:
+        return {"final_response": "Your report is already available. Use the download button below."}
+
+    # If the full clinical pipeline ran, build a proper structured summary.
+    # Do this BEFORE checking _last_non_tool_ai_message so a stale LLM message
+    # (e.g. "Please upload an image") never overrides real analysis results.
+    if diagnosis and triage:
+        primary = (
+            diagnosis.get("primary_diagnosis")
+            or diagnosis.get("finding")
+            or "Abnormality detected"
+        )
+        severity = str(diagnosis.get("severity") or "unknown").capitalize()
+        icd = diagnosis.get("icd_code") or ""
+        confidence = diagnosis.get("confidence") or diagnosis.get("ai_confidence")
+        notes = diagnosis.get("notes") or diagnosis.get("clinical_notes") or ""
+        differentials = diagnosis.get("differential_diagnoses") or diagnosis.get("differentials") or []
+        triage_level = str(triage.get("level") or triage.get("triage_level") or "GREEN").upper()
+        rationale = triage.get("rationale") or ""
+        timeframe = triage.get("recommended_timeframe") or ""
+        body_part = str(state.get("body_part") or "affected area").capitalize()
+        detections = state.get("detections") or []
+
+        lines = [
+            f"## 🦴 AI Orthopedic Analysis — {body_part}",
+            "",
+            f"**Primary Finding:** {primary}  ",
+            f"**Severity:** {_severity_emoji(severity)} {severity}"
+            + (f"  |  **ICD-10:** `{icd}`" if icd else ""),
+        ]
+        if confidence is not None:
+            try:
+                lines.append(f"**AI Confidence:** {float(confidence):.0%}")
+            except (ValueError, TypeError):
+                pass
+        if notes:
+            lines += ["", f"**Clinical Notes:** {notes}"]
+        if differentials:
+            lines += ["", "**Differential Diagnoses:**"]
+            for d in differentials:
+                if isinstance(d, dict):
+                    lines.append(f"- {d.get('diagnosis', d)} — probability: {d.get('probability', 'N/A')}")
+                else:
+                    lines.append(f"- {d}")
+        lines += [
+            "",
+            f"## 🚨 Triage Assessment",
+            f"**Level:** {_triage_label(triage_level)}",
+        ]
+        if rationale:
+            lines.append(f"**Rationale:** {rationale}")
+        if timeframe:
+            lines.append(f"**Recommended Timeframe:** {timeframe}")
+        if detections:
+            lines += ["", f"**Detections:** {len(detections)} finding(s) identified by vision model."]
         if hospitals:
-            response += f" Found {len(hospitals)} nearby hospital options."
-        if _report_requested(state):
-            if report_url:
-                response += f" Patient report is ready: {report_url}."
-            else:
-                response += " I could not finalize the PDF report in this run; you can retry report generation."
-        response += " Please confirm with a licensed clinician."
-        return {"final_response": response}
+            lines += ["", f"**Nearby Hospitals:** {len(hospitals)} option(s) found near your location."]
+        if report_url:
+            lines += ["", f"**Report ready.** Use the download button below."]
+        lines += [
+            "",
+            "---",
+            "*⚠️ This AI analysis is for decision support only. Always confirm findings with a licensed clinician before treatment.*",
+        ]
+        if not _report_requested(state) and not report_url:
+            lines += ["", "📄 *To generate a PDF report, just ask: \"Generate a report\".*"]
+
+        return {"final_response": "\n".join(lines)}
+
+    # Fallback: use the last non-tool LLM message (e.g. for knowledge/text-only answers)
+    ai_message = _last_non_tool_ai_message(state)
+    if ai_message:
+        return {"final_response": ai_message}
+
+    # Final fallback — partial pipeline
+    if diagnosis:
+        primary = diagnosis.get("primary_diagnosis") or diagnosis.get("finding") or "N/A"
+        severity = str(diagnosis.get("severity") or "N/A")
+        resp = f"**Finding:** {primary} (severity: {severity}).\n\nTriage assessment is still in progress."
+        resp += "\n\n*Please confirm with a licensed clinician.*"
+        return {"final_response": resp}
 
     return {
         "final_response": (

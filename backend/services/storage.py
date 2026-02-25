@@ -32,7 +32,8 @@ class StorageService:
         self.reports_dir.mkdir(parents=True, exist_ok=True)
 
     def _make_public_url(self, path: Path) -> str:
-        return f"/{path.relative_to(self.root).as_posix()}"
+        # Returns a URL served by the /storage static mount in main.py
+        return f"/storage/{path.relative_to(self.root).as_posix()}"
 
     async def save_bytes(self, data: bytes, filename: str, subdir: str = "raw") -> dict[str, str]:
         target_dir = self.root / subdir
