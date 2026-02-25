@@ -1,4 +1,5 @@
 import { getDoctorReports } from "@/lib/data/loaders";
+import { FileTextIcon } from "lucide-react";
 
 const severityClassName: Record<"AMBER" | "GREEN" | "RED", string> = {
   AMBER:
@@ -31,6 +32,7 @@ export default async function DoctorReportsPage() {
               <th className="px-4 py-3 font-semibold">Status</th>
               <th className="px-4 py-3 font-semibold">Severity</th>
               <th className="px-4 py-3 font-semibold">Created</th>
+              <th className="px-4 py-3 font-semibold">Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -62,6 +64,17 @@ export default async function DoctorReportsPage() {
                 </td>
                 <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
                   {new Date(report.createdAt).toLocaleString()}
+                </td>
+                <td className="px-4 py-3">
+                  <a
+                    href={`${process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/api$/, "") ?? "http://localhost:8000"}/reports/${report.id}.pdf`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--color-primary)]/30 bg-[var(--color-primary)]/10 px-3 py-1.5 text-xs font-medium text-[var(--color-primary)] transition-colors hover:bg-[var(--color-primary)]/20 dark:border-[var(--color-primary)]/40 dark:bg-[var(--color-primary)]/15 dark:hover:bg-[var(--color-primary)]/25"
+                  >
+                    <FileTextIcon className="size-3.5" />
+                    View PDF
+                  </a>
                 </td>
               </tr>
             ))}

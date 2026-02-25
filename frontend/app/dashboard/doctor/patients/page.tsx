@@ -1,3 +1,4 @@
+import { auth } from "@clerk/nextjs/server";
 import { getDoctorPatients } from "@/lib/data/loaders";
 
 const riskClassName: Record<"AMBER" | "GREEN" | "RED", string> = {
@@ -9,7 +10,12 @@ const riskClassName: Record<"AMBER" | "GREEN" | "RED", string> = {
 };
 
 export default async function DoctorPatientsPage() {
-  const patients = await getDoctorPatients();
+  const { userId, redirectToSignIn } = await auth();
+  if (!userId) {
+    return redirectToSignIn();
+  }
+
+  const patients = await getDoctorPatients(userId);
 
   return (
     <main className="space-y-4 p-6">
@@ -23,7 +29,12 @@ export default async function DoctorPatientsPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
-        {patients.map((patient) => (
+        {patients.length === 0 ? (
+          <p className="col-span-full text-center text-sm text-slate-500 dark:text-slate-400 py-12">
+            No patients found. Patients will appear here once they interact through chat sessions.
+          </p>
+        ) : (
+          patients.map((patient) => (
           <article
             className="rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_8px_20px_rgba(15,23,42,0.06)] dark:border-slate-700 dark:bg-slate-900 dark:shadow-[0_8px_20px_rgba(2,8,23,0.4)]"
             key={patient.id}
@@ -50,7 +61,8 @@ export default async function DoctorPatientsPage() {
               Last Study: {patient.lastStudy}
             </p>
           </article>
-        ))}
+          ))
+        )}
       </div>
     </main>
   );

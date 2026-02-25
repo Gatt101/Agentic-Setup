@@ -132,77 +132,52 @@ const orthoProducts = [
   {
     title: "X-Ray Analysis",
     link: "#",
-    thumbnail: "https://www.aceternity.com/images/products/thumbnails/new/moonbeam.png",
-  },
-  {
-    title: "Fracture Detection",
-    link: "#",
-    thumbnail: "https://www.aceternity.com/images/products/thumbnails/new/cursor.png",
+    thumbnail: "/images/X-rayAnalysis.png",
   },
   {
     title: "Clinical Reporting",
     link: "#",
-    thumbnail: "https://www.aceternity.com/images/products/thumbnails/new/rogue.png",
+    thumbnail: "/images/ClinicalReporting.png",
   },
   {
     title: "Patient Communication",
     link: "#",
-    thumbnail: "https://www.aceternity.com/images/products/thumbnails/new/editorially.png",
+    thumbnail: "/images/PatientCommunication.png",
   },
   {
     title: "Triage Assistance",
     link: "#",
-    thumbnail: "https://www.aceternity.com/images/products/thumbnails/new/editrix.png",
+    thumbnail: "/images/TriageAssistance.png",
   },
   {
     title: "Orthopedic Insights",
     link: "#",
-    thumbnail: "https://www.aceternity.com/images/products/thumbnails/new/pixelperfect.png",
-  },
-  {
-    title: "Symptom Assessment",
-    link: "#",
-    thumbnail: "https://www.aceternity.com/images/products/thumbnails/new/algochurn.png",
-  },
-  {
-    title: "Case Management",
-    link: "#",
-    thumbnail: "https://www.aceternity.com/images/products/thumbnails/new/aceternityui.png",
+    thumbnail: "/images/OrthopedicInsights.png",
   },
   {
     title: "Knowledge Base",
     link: "#",
-    thumbnail: "https://www.aceternity.com/images/products/thumbnails/new/tailwindmasterkit.png",
+    thumbnail: "/images/KnowledgeBase.png",
   },
   {
     title: "Nearby Clinics",
     link: "#",
-    thumbnail: "https://www.aceternity.com/images/products/thumbnails/new/smartbridge.png",
+    thumbnail: "/images/NearbyClinics.png",
   },
   {
     title: "Treatment Plans",
     link: "#",
-    thumbnail: "https://www.aceternity.com/images/products/thumbnails/new/renderwork.png",
-  },
-  {
-    title: "Anatomy Reference",
-    link: "#",
-    thumbnail: "https://www.aceternity.com/images/products/thumbnails/new/cremedigital.png",
-  },
-  {
-    title: "Multi-Study Review",
-    link: "#",
-    thumbnail: "https://www.aceternity.com/images/products/thumbnails/new/goldenbellsacademy.png",
-  },
-  {
-    title: "Emergency Routing",
-    link: "#",
-    thumbnail: "https://www.aceternity.com/images/products/thumbnails/new/invoker.png",
+    thumbnail: "/images/TreatmentPlans.png",
   },
   {
     title: "PDF Reports",
     link: "#",
-    thumbnail: "https://www.aceternity.com/images/products/thumbnails/new/efreeinvoice.png",
+    thumbnail: "/images/PDFReports.png",
+  },
+  {
+    title: "Fracture Detection",
+    link: "#",
+    thumbnail: "/images/X-rayAnalysis.png",
   },
 ];
 
@@ -413,7 +388,7 @@ export function LandingPage() {
       <HeroParallax
         products={orthoProducts}
         header={
-          <div className="max-w-7xl relative mx-auto py-20 md:py-36 px-6 w-full">
+          <div className="max-w-7xl relative mx-auto pt-10 pb-20 md:pt-16 md:pb-36 px-6 w-full">
             <motion.div
               animate={{ opacity: 1, y: 0 }}
               initial={{ opacity: 0, y: yOffset }}
