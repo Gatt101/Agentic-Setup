@@ -1,7 +1,6 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
 from api.middleware import setup_middleware
@@ -15,6 +14,7 @@ from services.storage import storage_service
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ARG001
     logger.info("OrthoAssist backend starting up...")
+    logger.info("Environment: {} | Base URL: {} | Frontend: {}", settings.app_env, settings.resolved_server_base_url, settings.frontend_url)
     await storage_service.initialize()
     await mongo_service.initialize()
     logger.info("OrthoAssist startup complete. Storage and MongoDB ready.")
@@ -34,9 +34,6 @@ def create_app() -> FastAPI:
 
     setup_middleware(app)
     app.include_router(api_router, prefix="/api")
-
-    # Serve generated PDFs and uploaded images under /storage/*
-    app.mount("/storage", StaticFiles(directory=str(settings.resolved_storage_path)), name="storage")
 
     return app
 

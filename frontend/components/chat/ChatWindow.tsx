@@ -223,7 +223,7 @@ export function ChatWindow({ actorId, mode, patientId }: ChatWindowProps) {
   );
 
   return (
-    <section className="flex h-[calc(100vh-11rem)] min-h-[460px] max-h-[820px] flex-col gap-3">
+    <section className="flex h-[calc(100vh-9rem)] min-h-[460px] flex-col gap-2">
       <Card className="relative flex min-h-0 flex-1 overflow-hidden border-slate-200/90 bg-gradient-to-b from-white to-slate-50 p-0 shadow-[0_12px_30px_rgba(15,23,42,0.08)] dark:border-slate-800 dark:bg-gradient-to-b dark:from-slate-950 dark:to-slate-900/70 dark:shadow-[0_12px_30px_rgba(2,8,23,0.45)]">
         <Conversation className="w-full">
           <ConversationContent className="gap-3 px-4 py-5 sm:px-6">
@@ -277,7 +277,7 @@ export function ChatWindow({ actorId, mode, patientId }: ChatWindowProps) {
         </Conversation>
       </Card>
 
-      <Card className="border-slate-200/90 bg-white/95 p-2 shadow-[0_10px_24px_rgba(15,23,42,0.06)] dark:border-slate-800 dark:bg-slate-950/80 dark:shadow-[0_10px_24px_rgba(2,8,23,0.45)]">
+      <Card className="shrink-0 border-slate-200/90 bg-white/95 p-1.5 shadow-[0_10px_24px_rgba(15,23,42,0.06)] dark:border-slate-800 dark:bg-slate-950/80 dark:shadow-[0_10px_24px_rgba(2,8,23,0.45)]">
         <ChatInput
           disabled={isLoading}
           isSubmitting={isLoading}

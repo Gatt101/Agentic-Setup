@@ -98,7 +98,7 @@ export function ChatInput({
     >
       <ChatInputAttachments />
       <PromptInputTextarea
-        className="min-h-[88px] max-h-[180px] text-[15px] leading-relaxed text-slate-800 placeholder:text-slate-400 dark:text-slate-100 dark:placeholder:text-slate-500"
+        className="min-h-[44px] max-h-[120px] text-[15.5px] leading-relaxed text-slate-800 placeholder:text-slate-400 dark:text-slate-100 dark:placeholder:text-slate-500"
         disabled={disabled}
         placeholder={placeholder}
       />
