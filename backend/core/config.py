@@ -19,6 +19,9 @@ class Settings(BaseSettings):
     # Base URL of this backend (auto-derived from app_env when not set)
     server_base_url: str = ""
 
+    # Frontend URL (used for CORS in production)
+    frontend_url: str = "http://localhost:3000"
+
     # OpenAI
     openai_api_key: str = ""
     supervisor_llm: str = "gpt-4o"
@@ -109,7 +112,15 @@ class Settings(BaseSettings):
 
     @property
     def cors_origins(self) -> list[str]:
+        """Build the list of allowed CORS origins.
+        In dev mode defaults to ["*"]. In production, restricts to
+        the explicit frontend_url plus any extra origins from
+        cors_allow_origins."""
         origins = [value.strip() for value in self.cors_allow_origins.split(",") if value.strip()]
+        # Always include the configured frontend URL
+        fe = self.frontend_url.rstrip("/")
+        if fe and fe not in origins:
+            origins.append(fe)
         return origins or ["*"]
 
 
