@@ -19,23 +19,21 @@ PIPELINE RULES:
 5. clinical_assess_triage requires diagnosis.
 6. If triage is RED or AMBER, hospital_find_nearby_hospitals is required.
 7. For text-only questions, use knowledge_* tools.
-8. Generate report PDFs ONLY when user explicitly asks for report/document.
+8. Generate report PDFs ONLY when user explicitly asks for report/document/PDF.
 9. Never call the same tool repeatedly with identical context.
 10. Keep final clinical response concise and medically safe.
 11. CRITICAL: Do NOT ask the user for information obtainable from tools.
-12. CRITICAL: If the user is asking to analyse/detect/examine the image, do NOT ask for a report or patient info. Just run the vision pipeline.
+12. CRITICAL: NEVER ask for patient name/age/gender UNLESS the user has explicitly asked for a report or PDF IN THEIR CURRENT MESSAGE. Analysis requests do NOT need patient info.
+13. CRITICAL: When the vision+clinical pipeline is complete (diagnosis and triage both present) and the user has NOT asked for a report, respond with a clear summary of the findings. Do NOT ask for any extra information.
 
-=== MANDATORY CHECKS BEFORE ANY REPORT TOOL CALL ===
-ALWAYS check the PIPELINE STATUS block. Before calling ANY report_generate_* tool:
-
-CHECK 1 — PATIENT INFO:
-  If 'Patient Info Missing' appears in PIPELINE STATUS, you MUST ask for missing fields.
-  Ask in ONE message: "Before I generate your report, I need a few details:\n- Full name\n- Age\n- Gender\nPlease share these."
+=== REPORT GATE (ONLY applies when user explicitly says \"report\", \"PDF\", or \"document\") ===
+If PIPELINE STATUS shows \"Report patient info needed\" AND the user demanded a report THIS turn:
+  Ask in ONE message: \"Before I generate your report, I need a few details:\n- Full name\n- Age\n- Gender\nPlease share these.\"
   Do NOT call any report tool until all of name, age, and gender are confirmed.
 
 === REPORT ROUTING ===
-  actor_role = patient → report_generate_patient_pdf
-  actor_role = doctor → report_generate_clinician_simple_pdf
+  actor_role = patient \u2192 report_generate_patient_pdf
+  actor_role = doctor \u2192 report_generate_clinician_simple_pdf
   Always inject doctor_name from actor_name into metadata when actor_role is doctor.
 """
 
@@ -77,14 +75,18 @@ def _build_pipeline_context(state: AgentState) -> str:
     else:
         lines.append("Triage: NOT YET")
 
-    # Patient info completeness
+    # Patient info — only surface this label when a report is likely needed,
+    # so the LLM does NOT ask proactively during a plain analysis turn.
     pi = state.get("patient_info") or {}
     missing_fields = [f for f in ("name", "age", "gender") if not (pi.get(f))]
-    if missing_fields:
-        lines.append(f"Patient Info Missing: {', '.join(missing_fields)}")
+    report_stage = bool(state.get("pending_report_actor_role")) or _report_requested(state)
+    if missing_fields and report_stage:
+        lines.append(f"Report patient info needed: {', '.join(missing_fields)}")
+    elif missing_fields:
+        lines.append("Patient info: not yet collected (only needed for report generation)")
     else:
         name = pi.get("name") or ""
-        lines.append(f"Patient Info: complete (name={name})")
+        lines.append(f"Patient info: complete (name={name})")
 
     if state.get("report_url"):
         lines.append(f"Report URL: {state['report_url']}")
