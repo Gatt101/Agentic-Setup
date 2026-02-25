@@ -7,8 +7,21 @@ import {
 } from "@/components/ai-elements/message";
 import type { AgentTraceStep, ChatAttachment } from "@/hooks/useChat";
 import { cn } from "@/lib/utils";
+import { DownloadIcon } from "lucide-react";
 
 import { AttachmentPreview } from "./AttachmentPreview";
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api";
+
+function extractReportUrl(text: string): string | null {
+  // Match both relative (/reports/xxx.pdf) and absolute (https://...) report URLs
+  const match = text.match(/Report:\s*((?:\/reports\/\S+\.pdf)|(?:https?:\/\/\S+))/i);
+  return match ? match[1] : null;
+}
+
+function stripReportLine(text: string): string {
+  return text.replace(/\n*Report:\s*(?:\/reports\/\S+\.pdf|https?:\/\/\S+)/i, "").trimEnd();
+}
 
 export type ChatRole = "assistant" | "user";
 
@@ -18,13 +31,6 @@ type MessageBubbleProps = {
   role: ChatRole;
   trace?: AgentTraceStep[];
 };
-
-/** Strip trailing `\n\nReport: <url>` lines injected by the backend and return them separately. */
-function extractReportUrl(text: string): { body: string; reportUrl: string | null } {
-  const match = text.match(/\n\nReport:\s*(https?:\/\/\S+)\s*$/);
-  if (!match) return { body: text, reportUrl: null };
-  return { body: text.slice(0, match.index), reportUrl: match[1] };
-}
 
 function formatTraceStep(step: AgentTraceStep): string {
   if (step.type === "supervisor_decision") {
@@ -41,7 +47,8 @@ function formatTraceStep(step: AgentTraceStep): string {
 
 export function MessageBubble({ attachment, content, role, trace }: MessageBubbleProps) {
   const isUser = role === "user";
-  const { body, reportUrl } = !isUser ? extractReportUrl(content) : { body: content, reportUrl: null };
+  const reportUrl = !isUser ? extractReportUrl(content) : null;
+  const displayContent = reportUrl ? stripReportLine(content) : content;
 
   return (
     <Message from={role}>
@@ -54,26 +61,22 @@ export function MessageBubble({ attachment, content, role, trace }: MessageBubbl
               : "border-slate-200 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-100"
           )}
         >
-          {body ? (
+          {displayContent ? (
             isUser ? (
-              <p className="m-0 whitespace-pre-wrap text-[15px] leading-relaxed">{body}</p>
+              <p className="m-0 whitespace-pre-wrap text-[15px] leading-relaxed">{displayContent}</p>
             ) : (
-              <MessageResponse className="text-[15px] leading-relaxed">{body}</MessageResponse>
+              <MessageResponse className="text-[15px] leading-relaxed">{displayContent}</MessageResponse>
             )
           ) : null}
           {reportUrl ? (
             <a
-              href={reportUrl}
+              href={reportUrl.startsWith("http") ? reportUrl : `${API_BASE_URL.replace(/\/api$/, "")}${reportUrl}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-3 flex w-fit items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 transition-colors hover:bg-blue-100 dark:border-blue-700 dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-900/50"
+              download
+              className="mt-3 inline-flex items-center gap-2 rounded-lg border border-[var(--color-primary)]/30 bg-[var(--color-primary)]/10 px-3 py-2 text-sm font-medium text-[var(--color-primary)] transition-colors hover:bg-[var(--color-primary)]/20 dark:border-[var(--color-primary)]/40 dark:bg-[var(--color-primary)]/15 dark:hover:bg-[var(--color-primary)]/25"
             >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                <polyline points="14 2 14 8 20 8"/>
-                <line x1="12" y1="18" x2="12" y2="12"/>
-                <line x1="9" y1="15" x2="15" y2="15"/>
-              </svg>
+              <DownloadIcon className="size-4" />
               Download Report (PDF)
             </a>
           ) : null}

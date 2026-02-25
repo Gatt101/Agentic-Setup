@@ -550,3 +550,67 @@ async def chat_with_agent(request: ChatRequest) -> AgentResponse:
         location=request.location,
     )
     return await chat_in_session(chat_id, bridged)
+
+
+@router.get("/patients")
+async def list_patients(
+    actor_id: str = Query(...),
+    actor_role: str = Query(...),
+) -> list[dict[str, Any]]:
+    """Derive a patient list from chat sessions + pipeline state."""
+    role = _normalize_role(actor_role)
+    sessions = await chat_store.list_sessions(actor_id=actor_id, actor_role=role)
+
+    seen: dict[str, dict[str, Any]] = {}
+    for session in sessions:
+        pid = session.get("patient_id") or ""
+        if not pid or pid == actor_id:
+            continue
+
+        pipeline_info: dict[str, Any] = {}
+        for key in ("pipeline_patient_info", "pipeline_triage_result", "pipeline_body_part", "pipeline_diagnosis"):
+            val = session.get(key)
+            if val:
+                pipeline_info[key] = val
+
+        patient_info = pipeline_info.get("pipeline_patient_info") or {}
+        triage = pipeline_info.get("pipeline_triage_result") or {}
+        diagnosis = pipeline_info.get("pipeline_diagnosis") or {}
+
+        triage_level = str(triage.get("triage_level") or triage.get("urgency_level") or "").upper()
+        risk = "GREEN"
+        if triage_level in ("RED", "HIGH", "URGENT", "EMERGENCY"):
+            risk = "RED"
+        elif triage_level in ("AMBER", "MEDIUM", "MODERATE"):
+            risk = "AMBER"
+
+        name = str(patient_info.get("name") or patient_info.get("patient_name") or pid)
+        age = patient_info.get("age")
+        summary_text = str(diagnosis.get("summary") or diagnosis.get("description") or triage.get("recommendation") or "")
+
+        last_msg = session.get("last_message_at")
+        last_study = _to_iso(last_msg) if last_msg else ""
+
+        if pid not in seen:
+            seen[pid] = {
+                "id": pid,
+                "name": name,
+                "age": int(age) if age is not None and str(age).isdigit() else 0,
+                "riskLevel": risk,
+                "summary": summary_text or "No summary available yet.",
+                "lastStudy": last_study[:10] if last_study else "",
+            }
+        else:
+            existing = seen[pid]
+            if name != pid and existing["name"] == pid:
+                existing["name"] = name
+            if age and not existing["age"]:
+                existing["age"] = int(age) if str(age).isdigit() else 0
+            if risk == "RED" or (risk == "AMBER" and existing["riskLevel"] == "GREEN"):
+                existing["riskLevel"] = risk
+            if summary_text and existing["summary"] == "No summary available yet.":
+                existing["summary"] = summary_text
+            if last_study and last_study > existing["lastStudy"]:
+                existing["lastStudy"] = last_study[:10]
+
+    return list(seen.values())

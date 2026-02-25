@@ -1,6 +1,5 @@
 import { doctorDashboardMockData } from "@/lib/mock-data/doctor-dashboard";
 import { nearbyCareMockData } from "@/lib/mock-data/nearby-care";
-import { doctorPatientsMockData } from "@/lib/mock-data/patients";
 import {
   doctorReportsMockData,
   patientReportsMockData,
@@ -66,8 +65,15 @@ export async function getDoctorDashboardData(): Promise<DoctorDashboardData> {
   }
 }
 
-export async function getDoctorPatients(): Promise<PatientRecord[]> {
-  return cloneData(doctorPatientsMockData);
+export async function getDoctorPatients(doctorId: string): Promise<PatientRecord[]> {
+  try {
+    const patients = await fetchApi<PatientRecord[]>(
+      `/patients?actor_id=${encodeURIComponent(doctorId)}&actor_role=doctor`
+    );
+    return patients;
+  } catch {
+    return [];
+  }
 }
 
 export async function getDoctorReports(): Promise<ReportRecord[]> {
