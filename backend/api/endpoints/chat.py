@@ -525,7 +525,7 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
         # Persist patient info immediately
         _intake_pipeline: dict = {
             "patient_info": merged_patient_info,
-            "pending_report_actor_role": pipeline_state.get("pending_report_actor_role"),
+            "pending_report_actor_role": None,
         }
         if _existing_mongo_patient_id:
             _intake_pipeline["mongo_patient_id"] = _existing_mongo_patient_id
@@ -605,6 +605,11 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
     final_response = result.get("final_response") or "No response generated."
     assistant_message_id = str(uuid4())
     trace = result.get("agent_trace") or []
+    _tool_calls_this_turn = [str(name) for name in (result.get("tool_calls_made") or [])]
+    _analysis_generated_this_turn = any(
+        name in {"clinical_generate_diagnosis", "clinical_assess_triage"}
+        for name in _tool_calls_this_turn
+    )
 
     # ── Persist updated clinical pipeline state back to session ──────────────
     new_pipeline: dict = {}
@@ -646,25 +651,27 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
             best_pi["patient_id"] = _mongo_patient_id
             new_pipeline["patient_info"] = best_pi
             logger.info("chat_id={} patient upserted patient_id={}", chat_id, _mongo_patient_id)
-
-            # If analysis was done this turn, attach it to the patient record
-            _diag = result.get("diagnosis")
-            _tria = result.get("triage_result")
-            if _diag and _tria:
-                try:
-                    await patient_store.add_analysis(
-                        _mongo_patient_id,
-                        {
-                            "body_part": result.get("body_part"),
-                            "diagnosis": _diag,
-                            "triage": _tria,
-                            "detections": result.get("detections"),
-                        },
-                    )
-                except Exception as _ae:
-                    logger.warning("chat_id={} failed to add analysis to patient: {}", chat_id, _ae)
         except Exception as _pe:
             logger.warning("chat_id={} patient upsert failed: {}", chat_id, _pe)
+
+    # Save analysis only when analysis tools ran in THIS turn (not report-only turns).
+    if _analysis_generated_this_turn and mongo_service.enabled:
+        _analysis_patient_id = str(new_pipeline.get("mongo_patient_id") or _existing_mongo_patient_id or "")
+        _diag = result.get("diagnosis")
+        _tria = result.get("triage_result")
+        if _analysis_patient_id and _diag and _tria:
+            try:
+                await patient_store.add_analysis(
+                    _analysis_patient_id,
+                    {
+                        "body_part": result.get("body_part"),
+                        "diagnosis": _diag,
+                        "triage": _tria,
+                        "detections": result.get("detections"),
+                    },
+                )
+            except Exception as _ae:
+                logger.warning("chat_id={} failed to add analysis to patient: {}", chat_id, _ae)
 
     if new_pipeline:
         try:

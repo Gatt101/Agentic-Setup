@@ -25,6 +25,16 @@ _STALE_LLM_PHRASES = (
     "i need the image",
 )
 
+_REPORT_TOOLS = {
+    "report_generate_patient_pdf",
+    "report_generate_clinician_pdf",
+    "report_generate_clinician_simple_pdf",
+}
+_ANALYSIS_TOOLS = {
+    "clinical_generate_diagnosis",
+    "clinical_assess_triage",
+}
+
 
 def _last_non_tool_ai_message(state: AgentState) -> str | None:
     diagnosis = state.get("diagnosis")
@@ -84,6 +94,17 @@ async def response_builder_node(state: AgentState) -> dict:
     triage = state.get("triage_result")
     hospitals = state.get("hospitals")
     report_url = state.get("report_url")
+    tool_calls_made = [str(name) for name in (state.get("tool_calls_made") or [])]
+    report_generated_this_turn = bool(report_url) and any(name in _REPORT_TOOLS for name in tool_calls_made)
+    analysis_generated_this_turn = any(name in _ANALYSIS_TOOLS for name in tool_calls_made)
+
+    # If report generation happened using prior analysis, don't repeat analysis blocks.
+    if report_generated_this_turn and not analysis_generated_this_turn:
+        return {"final_response": "Your PDF report is ready. Use the download button below."}
+
+    # If report already exists and user asks for it again, keep response concise.
+    if report_url and _report_requested(state) and not analysis_generated_this_turn:
+        return {"final_response": "Your report is already available. Use the download button below."}
 
     # If the full clinical pipeline ran, build a proper structured summary.
     # Do this BEFORE checking _last_non_tool_ai_message so a stale LLM message

@@ -185,6 +185,78 @@ class PatientStore:
 
     # ── reports ───────────────────────────────────────────────────────────────
 
+    async def delete_patient(
+        self,
+        patient_id: str,
+        actor_id: str,
+        actor_role: str,
+    ) -> dict[str, int]:
+        """Delete a patient and linked records visible to the caller."""
+        await self.ensure_enabled()
+
+        role = actor_role.strip().lower()
+        if role not in {"doctor", "patient"}:
+            raise ValueError("actor_role must be 'doctor' or 'patient'.")
+
+        owner_filter: dict[str, Any] = (
+            {"doctor_user_id": actor_id} if role == "doctor" else {"patient_user_id": actor_id}
+        )
+        scoped_query = {"patient_id": patient_id, **owner_filter}
+        patient = await mongo_service.db.patients.find_one(scoped_query, {"_id": 0, "patient_id": 1})
+        if not patient:
+            return {
+                "deleted_patients": 0,
+                "deleted_reports": 0,
+                "deleted_assignments": 0,
+                "deleted_sessions": 0,
+                "deleted_messages": 0,
+                "deleted_traces": 0,
+                "deleted_kb_documents": 0,
+                "deleted_kb_chunks": 0,
+            }
+
+        deleted_patient = await mongo_service.db.patients.delete_one(scoped_query)
+        deleted_reports = await mongo_service.db.reports.delete_many({"patient_id": patient_id})
+        deleted_assignments = await mongo_service.db.doctor_patient_assignments.delete_many({"patient_id": patient_id})
+        deleted_kb_documents = await mongo_service.db.kb_documents.delete_many({"patient_id": patient_id})
+        deleted_kb_chunks = await mongo_service.db.kb_chunks.delete_many({"patient_id": patient_id})
+
+        chat_ids = [
+            row["chat_id"]
+            async for row in mongo_service.db.chat_sessions.find(
+                {"pipeline_mongo_patient_id": patient_id},
+                {"_id": 0, "chat_id": 1},
+            )
+            if row.get("chat_id")
+        ]
+        deleted_sessions = 0
+        deleted_messages = 0
+        deleted_traces = 0
+        if chat_ids:
+            session_result = await mongo_service.db.chat_sessions.delete_many(
+                {"chat_id": {"$in": chat_ids}}
+            )
+            messages_result = await mongo_service.db.chat_messages.delete_many(
+                {"chat_id": {"$in": chat_ids}}
+            )
+            traces_result = await mongo_service.db.chat_traces.delete_many(
+                {"chat_id": {"$in": chat_ids}}
+            )
+            deleted_sessions = int(session_result.deleted_count or 0)
+            deleted_messages = int(messages_result.deleted_count or 0)
+            deleted_traces = int(traces_result.deleted_count or 0)
+
+        return {
+            "deleted_patients": int(deleted_patient.deleted_count or 0),
+            "deleted_reports": int(deleted_reports.deleted_count or 0),
+            "deleted_assignments": int(deleted_assignments.deleted_count or 0),
+            "deleted_sessions": deleted_sessions,
+            "deleted_messages": deleted_messages,
+            "deleted_traces": deleted_traces,
+            "deleted_kb_documents": int(deleted_kb_documents.deleted_count or 0),
+            "deleted_kb_chunks": int(deleted_kb_chunks.deleted_count or 0),
+        }
+
     async def save_report(
         self,
         patient_id: str,

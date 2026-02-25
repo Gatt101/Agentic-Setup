@@ -92,3 +92,30 @@ async def get_patient(patient_id: str) -> dict[str, Any]:
         raise HTTPException(status_code=404, detail="Patient not found.")
     patient.pop("_id", None)
     return patient
+
+
+@router.delete("/patients/{patient_id}")
+async def delete_patient(
+    patient_id: str,
+    actor_id: str = Query(..., description="Clerk user ID"),
+    actor_role: str = Query(..., description="doctor or patient"),
+) -> dict[str, Any]:
+    role = actor_role.strip().lower()
+    if role not in ("doctor", "patient"):
+        raise HTTPException(status_code=400, detail="actor_role must be 'doctor' or 'patient'.")
+
+    try:
+        result = await patient_store.delete_patient(
+            patient_id=patient_id,
+            actor_id=actor_id,
+            actor_role=role,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if int(result.get("deleted_patients", 0)) == 0:
+        raise HTTPException(status_code=404, detail="Patient not found or not permitted.")
+
+    return {"status": "ok", **result}

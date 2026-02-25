@@ -78,7 +78,7 @@ def _build_pipeline_context(state: AgentState) -> str:
     # Patient info — only surface the "needed" label during an explicit report request
     pi = state.get("patient_info") or {}
     missing_fields = _missing_patient_fields(state)
-    report_stage = bool(state.get("pending_report_actor_role")) or _report_requested(state)
+    report_stage = _report_requested(state)
     if missing_fields and report_stage:
         lines.append(f"Report patient info needed: {', '.join(missing_fields)}")
     elif missing_fields:
@@ -178,12 +178,11 @@ def _forced_tool_call(state: AgentState) -> dict | None:
         return {"name": "clinical_assess_triage", "args": {}}
 
     if diagnosis and triage and not report_url:
-        # Check if report was explicitly requested this turn OR was pending from a previous gated turn
-        pending_role = state.get("pending_report_actor_role")
+        # Report should run ONLY when explicitly requested in the current turn.
         report_this_turn = _report_requested(state)
 
-        if report_this_turn or pending_role:
-            actor_role = str(state.get("actor_role") or pending_role or "patient").lower()
+        if report_this_turn:
+            actor_role = str(state.get("actor_role") or "patient").lower()
 
             # Guard: don't retry a report tool that already ran (prevents infinite loops)
             report_tools_attempted = [
@@ -313,7 +312,7 @@ async def supervisor_node(state: AgentState) -> dict:
     # so it generates nonsense like "Please upload an image".  The response_builder
     # node will produce the rich clinical summary directly from state.
     _pipeline_complete = bool(state.get("diagnosis")) and bool(state.get("triage_result"))
-    _report_needed = _report_requested(state) or bool(state.get("pending_report_actor_role"))
+    _report_needed = _report_requested(state)
     if _pipeline_complete and not _report_needed and not _report_already_done:
         logger.info("session={} analysis pipeline complete, routing directly to response_builder", session_id)
         return {
@@ -323,7 +322,7 @@ async def supervisor_node(state: AgentState) -> dict:
             "agent_trace": [*state.get("agent_trace", []), {"type": "supervisor_decision", "iteration": iteration, "active_agent": "none", "tool_calls": []}],
             "current_agent": None,
             "error": None,
-            "pending_report_actor_role": state.get("pending_report_actor_role"),
+            "pending_report_actor_role": None,
         }
 
     else:
@@ -362,14 +361,8 @@ async def supervisor_node(state: AgentState) -> dict:
                     )
                 )
             # (Full clinical report option removed — doctor always gets summary report)
-        # ── Set pending_report flag when gating so next turn auto-triggers report ──
-        _pending_flag_update: str | None = state.get("pending_report_actor_role")
-        _gated_response = getattr(response, "tool_calls", None) is None or len(getattr(response, "tool_calls", [])) == 0
-        if _gated_response and _report_requested(state) and state.get("diagnosis") and state.get("triage_result"):
-            # We were asked for a report but gated — remember this for the next turn
-            _pending_flag_update = str(state.get("actor_role") or "patient").lower()
-        elif state.get("report_url"):
-            _pending_flag_update = None  # report done, clear flag
+        # Pending auto-trigger is disabled: report generation must be explicit per-turn.
+        _pending_flag_update: str | None = None
     called = [call.get("name", "") for call in getattr(response, "tool_calls", []) if call.get("name")]
     active_agent = _tool_to_agent(called[-1]) if called else state.get("current_agent")
 
