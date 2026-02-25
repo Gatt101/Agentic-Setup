@@ -2,6 +2,8 @@
 node_modules/
 .next/
 out/
+.clerk/
+clerk
 
 # Build and logs
 dist/

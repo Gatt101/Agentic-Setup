@@ -158,7 +158,7 @@ export function AppSidebar({ role, userId }: SidebarProps) {
   return (
     <Sidebar open={open} setOpen={setOpen}>
       <SidebarBody className="justify-between gap-8">
-        <div className="flex flex-1 flex-col overflow-x-hidden overflow-y-auto">
+        <div className="flex flex-1 flex-col overflow-x-hidden">
           <OrthoLogo open={open} />
           <nav className="mt-8 flex flex-col gap-1">
             {links.map((link) => (
@@ -187,25 +187,27 @@ export function AppSidebar({ role, userId }: SidebarProps) {
             ))}
 
             {pathname.includes("/chat") && chatSessions.length > 0 ? (
-              <div className="mt-3 space-y-1">
+              <div className="mt-3">
                 <p className="px-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400 dark:text-slate-500">
                   Recent Chats
                 </p>
-                {chatSessions.map((session) => {
-                  const href = `${chatBaseHref}?chat_id=${encodeURIComponent(session.chat_id)}`;
-                  const isActive = activeChatId === session.chat_id;
-                  return (
-                    <SidebarLink
-                      key={session.chat_id}
-                      link={{
-                        href,
-                        icon: <MessageSquare className="h-4 w-4 shrink-0" />,
-                        label: session.title || "Untitled chat",
-                      }}
-                      className={cn(isActive ? "bg-[var(--color-primary)]/10 dark:bg-[var(--color-primary)]/20" : "")}
-                    />
-                  );
-                })}
+                <div className="mt-1 max-h-48 overflow-y-auto space-y-1 pr-1 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+                  {chatSessions.map((session) => {
+                    const href = `${chatBaseHref}?chat_id=${encodeURIComponent(session.chat_id)}`;
+                    const isActive = activeChatId === session.chat_id;
+                    return (
+                      <SidebarLink
+                        key={session.chat_id}
+                        link={{
+                          href,
+                          icon: <MessageSquare className="h-4 w-4 shrink-0" />,
+                          label: session.title || "Untitled chat",
+                        }}
+                        className={cn(isActive ? "bg-[var(--color-primary)]/10 dark:bg-[var(--color-primary)]/20" : "")}
+                      />
+                    );
+                  })}
+                </div>
               </div>
             ) : null}
           </nav>

@@ -19,28 +19,25 @@ from services.chat_store import chat_store
 
 
 def _report_requested(state: AgentState) -> bool:
-    text = str(state.get("user_message") or "").lower()
-    keywords = ("report", "pdf", "document")
-    return any(keyword in text for keyword in keywords)
+    text = str(state.get("user_message") or "").lower().strip()
+    report_keywords = ("report", "pdf", "document")
+    type_keywords = ("summary", "quick", "simple", "simplified", "full", "clinical",
+                     "detailed", "depth", "complete", "comprehensive")
+    if any(keyword in text for keyword in report_keywords):
+        return True
+    # Treat type-selection responses as report requests when pipeline is complete
+    diagnosis = state.get("diagnosis")
+    triage = state.get("triage_result")
+    if diagnosis and triage and not state.get("report_url"):
+        if any(keyword in text for keyword in type_keywords):
+            return True
+        # Also handle numbered choices "1" / "2" as report type selection
+        if text in ("1", "2"):
+            return True
+    return False
 
 
 def should_continue(state: AgentState) -> str:
-    diagnosis = state.get("diagnosis")
-    triage = state.get("triage_result")
-    report_url = state.get("report_url")
-    tool_calls_made = state.get("tool_calls_made", [])
-    report_tool_attempts = sum(
-        1 for name in tool_calls_made if name in {"report_generate_patient_pdf", "report_generate_clinician_pdf"}
-    )
-
-    if diagnosis and triage:
-        if not _report_requested(state):
-            return "response_builder"
-        if report_url:
-            return "response_builder"
-        if report_tool_attempts >= 1:
-            return "response_builder"
-
     if state.get("iteration_count", 0) >= settings.max_agent_iterations:
         return "error_handler"
     if state.get("error"):
@@ -51,8 +48,32 @@ def should_continue(state: AgentState) -> str:
         return "response_builder"
 
     last_message = messages[-1]
+
+    # If supervisor returned tool calls, always execute them first
     if getattr(last_message, "tool_calls", None):
         return "tool_executor"
+
+    # No tool calls — decide whether to end or loop back
+    diagnosis = state.get("diagnosis")
+    triage = state.get("triage_result")
+    report_url = state.get("report_url")
+    tool_calls_made = state.get("tool_calls_made", [])
+    report_tool_attempts = sum(
+        1 for name in tool_calls_made if name in {
+            "report_generate_patient_pdf",
+            "report_generate_clinician_pdf",
+            "report_generate_clinician_simple_pdf",
+        }
+    )
+
+    # If pipeline complete and either: report done, report not requested, or already attempted
+    if diagnosis and triage:
+        if not _report_requested(state):
+            return "response_builder"
+        if report_url:
+            return "response_builder"
+        if report_tool_attempts >= 1:
+            return "response_builder"
 
     return "response_builder"
 

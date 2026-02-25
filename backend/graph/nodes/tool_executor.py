@@ -116,6 +116,22 @@ def _inject_state_into_report_calls(state: AgentState) -> AgentState:
     patient_id = str(state.get("patient_id") or "unknown")
     body_part = str(state.get("body_part") or "unknown")
     report_url = state.get("report_url")
+    actor_name = str(state.get("actor_name") or "")
+    actor_role = str(state.get("actor_role") or "patient").lower()
+
+    # Build enriched patient_info from state (name/age/gender extracted from conversation)
+    _state_pi = state.get("patient_info") or {}
+    _enriched_pi: dict = {
+        "patient_id": str(_state_pi.get("patient_id") or patient_id),
+        "body_part": body_part,
+    }
+    for _k in ("name", "age", "gender", "doctor"):
+        _v = _state_pi.get(_k)
+        if _v:
+            _enriched_pi[_k] = _v
+    # For doctor role, the referring doctor IS the logged-in doctor
+    if actor_role == "doctor" and actor_name:
+        _enriched_pi["doctor"] = actor_name
 
     changed = False
     updated_calls = []
@@ -157,8 +173,8 @@ def _inject_state_into_report_calls(state: AgentState) -> AgentState:
                 merged["diagnosis"] = diagnosis
             if not isinstance(merged.get("triage"), dict):
                 merged["triage"] = triage
-            if not isinstance(merged.get("patient_info"), dict):
-                merged["patient_info"] = {"patient_id": patient_id}
+            if not isinstance(merged.get("patient_info"), dict) or not merged["patient_info"].get("name"):
+                merged["patient_info"] = _enriched_pi
             if not isinstance(merged.get("recommendations"), list) or not merged.get("recommendations"):
                 merged["recommendations"] = _default_recommendations(state)
             if not isinstance(merged.get("image_base64"), str) or not str(merged.get("image_base64")).strip():
@@ -180,7 +196,41 @@ def _inject_state_into_report_calls(state: AgentState) -> AgentState:
                 merged["metadata"] = {
                     "patient_id": patient_id,
                     "body_part": body_part,
+                    "study_id": str(state.get("session_id") or "unknown"),
+                    "doctor_name": actor_name,
+                    "actor_name": actor_name,
                 }
+            call = {**call, "args": merged}
+            changed = True
+
+        if name == "report_generate_clinician_simple_pdf":
+            merged = {**args}
+            if not isinstance(merged.get("diagnosis"), dict):
+                merged["diagnosis"] = diagnosis
+            if not isinstance(merged.get("triage"), dict):
+                merged["triage"] = triage
+            if not isinstance(merged.get("metadata"), dict):
+                merged["metadata"] = {
+                    "patient_id": _enriched_pi.get("patient_id", patient_id),
+                    "body_part": body_part,
+                    "study_id": str(state.get("session_id") or "unknown"),
+                    "doctor_name": actor_name if actor_role == "doctor" else _enriched_pi.get("doctor", ""),
+                    "actor_name": actor_name,
+                    "patient_name": _enriched_pi.get("name", ""),
+                    "patient_age": str(_enriched_pi.get("age", "")),
+                    "patient_gender": _enriched_pi.get("gender", ""),
+                }
+            else:
+                # Enrich existing metadata
+                meta = merged["metadata"]
+                if not meta.get("body_part"):
+                    meta["body_part"] = body_part
+                if not meta.get("doctor_name") and actor_role == "doctor":
+                    meta["doctor_name"] = actor_name
+            if not isinstance(merged.get("recommendations"), list) or not merged.get("recommendations"):
+                merged["recommendations"] = _default_recommendations(state)
+            if not isinstance(merged.get("image_base64"), str) or not str(merged.get("image_base64")).strip():
+                merged["image_base64"] = state.get("image_data")
             call = {**call, "args": merged}
             changed = True
 
@@ -242,7 +292,7 @@ async def tool_executor_node(state: AgentState, config=None) -> dict:
             updates["triage_result"] = payload
         elif message.name == "hospital_find_nearby_hospitals":
             updates["hospitals"] = payload.get("hospitals", [])
-        elif message.name in {"report_generate_patient_pdf", "report_generate_clinician_pdf"}:
+        elif message.name in {"report_generate_patient_pdf", "report_generate_clinician_pdf", "report_generate_clinician_simple_pdf"}:
             updates["report_url"] = payload.get("pdf_url")
 
     if trace_events:

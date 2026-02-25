@@ -167,5 +167,45 @@ class ChatStore:
             "trace": row.get("events", []),
         }
 
+    # ── Clinical pipeline state ────────────────────────────────────────────────
+    async def save_pipeline_state(self, chat_id: str, state: dict[str, Any]) -> None:
+        """Persist diagnosis, triage, body_part, detections, patient_info per session."""
+        await self.ensure_enabled()
+        fields: dict[str, Any] = {"pipeline_state_updated_at": _now()}
+        for key in ("diagnosis", "triage_result", "body_part", "detections", "patient_info"):
+            if key in state and state[key] is not None:
+                fields[f"pipeline_{key}"] = state[key]
+        # pending_report_actor_role must always be written (None explicitly clears it)
+        if "pending_report_actor_role" in state:
+            fields["pipeline_pending_report_actor_role"] = state["pending_report_actor_role"]
+        await mongo_service.db.chat_sessions.update_one(
+            {"chat_id": chat_id},
+            {"$set": fields},
+        )
+
+    async def get_pipeline_state(self, chat_id: str) -> dict[str, Any]:
+        """Load persisted clinical state for a session."""
+        await self.ensure_enabled()
+        row = await mongo_service.db.chat_sessions.find_one(
+            {"chat_id": chat_id},
+            projection={
+                "_id": 0,
+                "pipeline_diagnosis": 1,
+                "pipeline_triage_result": 1,
+                "pipeline_body_part": 1,
+                "pipeline_detections": 1,
+                "pipeline_patient_info": 1,
+                "pipeline_pending_report_actor_role": 1,
+            },
+        )
+        if not row:
+            return {}
+        out: dict[str, Any] = {}
+        for key in ("diagnosis", "triage_result", "body_part", "detections", "patient_info", "pending_report_actor_role"):
+            val = row.get(f"pipeline_{key}")
+            if val is not None:
+                out[key] = val
+        return out
+
 
 chat_store = ChatStore()

@@ -86,24 +86,31 @@ def _extract_patient_info(history: list[dict], current_message: str, patient_id:
 
     info: dict[str, Any] = {"patient_id": patient_id}
 
-    name_match = re.search(r"\bname\s*[:=-]\s*([A-Za-z][A-Za-z\s]{1,60})", merged_text, flags=re.IGNORECASE)
-    age_match = re.search(r"\bage\s*[:=-]\s*(\d{1,3})\b", merged_text, flags=re.IGNORECASE)
-    gender_match = re.search(
-        r"\b(gender|sex)\s*[:=-]\s*(male|female|other|non-binary|nonbinary)\b",
+    # Accept: "name: John", "name = John", "name - John", "name John", "name chiarg"
+    name_match = re.search(
+        r"\bname\s*[:=\-]?\s*([A-Za-z][A-Za-z\s\.]{1,60})(?:[,\n]|$)",
         merged_text,
         flags=re.IGNORECASE,
     )
-    doctor_match = re.search(r"\bdoctor\s*[:=-]\s*([A-Za-z][A-Za-z\s\.]{1,60})", merged_text, flags=re.IGNORECASE)
+    # Accept: "age: 33", "age = 33", "age 33"
+    age_match = re.search(r"\bage\s*[:=\-]?\s*(\d{1,3})\b", merged_text, flags=re.IGNORECASE)
+    # Accept: "gender: male", "gender = male", "gemder = male" (typo tolerance via loose prefix)
+    gender_match = re.search(
+        r"\bge[nm]de?r?\s*[:=\-]?\s*(male|female|other|non-binary|nonbinary)\b",
+        merged_text,
+        flags=re.IGNORECASE,
+    )
+    doctor_match = re.search(r"\bdoctor\s*[:=\-]?\s*([A-Za-z][A-Za-z\s\.]{1,60})", merged_text, flags=re.IGNORECASE)
 
     if name_match:
-        info["name"] = name_match.group(1).strip()
+        info["name"] = name_match.group(1).strip().rstrip(",")
     if age_match:
         try:
             info["age"] = int(age_match.group(1))
         except ValueError:
             pass
     if gender_match:
-        info["gender"] = gender_match.group(2).strip().title()
+        info["gender"] = gender_match.group(1).strip().title()
     if doctor_match:
         info["doctor"] = doctor_match.group(1).strip()
 
@@ -341,6 +348,7 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
     message = request.message
     attachment_kind = _classify_attachment(attachment)
     image_data = attachment if attachment_kind == "image" else None
+    fresh_image = image_data is not None  # True only when user uploaded image in THIS message
     history_before = await chat_store.get_messages(chat_id)
     if image_data is None:
         image_data = _extract_latest_image_data(history_before)
@@ -362,6 +370,25 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
         attachment_data_url=attachment,
     )
 
+    patient_info = _extract_patient_info(
+        history=history_before,
+        current_message=message,
+        patient_id=str(session.get("patient_id") or request.patient_id or request.actor_id),
+    )
+    # For doctor role, inject actor_name as the referring doctor (only if it looks like a real name)
+    clean_actor_name = (request.actor_name or "").strip()
+    # Reject Clerk user-IDs (e.g. "user_2vXyz...") — they are not display names
+    if clean_actor_name.startswith("user_") or not any(c.isalpha() for c in clean_actor_name):
+        clean_actor_name = ""
+    if actor_role == "doctor" and clean_actor_name:
+        patient_info.setdefault("doctor", clean_actor_name)
+
+    # ── Load persisted clinical pipeline state from previous turns ────────────
+    pipeline_state = await chat_store.get_pipeline_state(chat_id)
+    stored_patient_info: dict = pipeline_state.pop("patient_info", {}) or {}
+    # Merge persisted patient_info with freshly-extracted one (fresh extraction wins for present fields)
+    merged_patient_info = {**stored_patient_info, **{k: v for k, v in patient_info.items() if v}}
+
     payload = {
         "session_id": chat_id,
         "user_message": message,
@@ -369,6 +396,11 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
         "image_data": image_data,
         "patient_id": session.get("patient_id") or request.patient_id,
         "location": request.location,
+        "actor_role": actor_role,
+        "actor_name": clean_actor_name or "",
+        "patient_info": merged_patient_info,
+        # Re-inject clinical pipeline state from previous turns so the agent has context
+        **pipeline_state,
     }
 
     try:
@@ -382,38 +414,37 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
         raise HTTPException(status_code=500, detail=_agent_error_message(str(exc))) from exc
 
     detections = result.get("detections")
-    annotated_image_base64 = await _build_annotated_image(image_data, detections)
+    # Only annotate when the user actually uploaded a fresh image this turn
+    annotated_image_base64 = await _build_annotated_image(image_data, detections) if fresh_image else None
     final_response = result.get("final_response") or "No response generated."
     assistant_message_id = str(uuid4())
     trace = result.get("agent_trace") or []
-    patient_info = _extract_patient_info(
-        history=history_before,
-        current_message=request.message,
-        patient_id=str(session.get("patient_id") or request.actor_id),
-    )
-    report_url = await _ensure_patient_report(
-        report_requested=_report_requested(request.message),
-        diagnosis=result.get("diagnosis"),
-        triage=result.get("triage_result"),
-        patient_info=patient_info,
-        image_base64=image_data,
-        detections=detections if isinstance(detections, list) else None,
-        annotated_image_base64=annotated_image_base64,
-    )
-    if not report_url:
-        report_url = result.get("report_url") if isinstance(result.get("report_url"), str) else None
 
-    if report_url and _report_requested(request.message) and report_url not in final_response:
-        final_response = f"{final_response}\n\nPatient report: {report_url}"
+    # ── Persist updated clinical pipeline state back to session ──────────────
+    new_pipeline: dict = {}
+    for _k in ("diagnosis", "triage_result", "body_part", "detections"):
+        _v = result.get(_k)
+        if _v is not None:
+            new_pipeline[_k] = _v
+    # Track pending_report flag (None means clear it)
+    _pending = result.get("pending_report_actor_role")
+    new_pipeline["pending_report_actor_role"] = _pending  # explicit None clears it in MongoDB via $set
+    # Merge patient_info: stored + newly extracted, always keep the most complete version
+    result_pi = result.get("patient_info") or {}
+    best_pi = {**stored_patient_info, **{k: v for k, v in merged_patient_info.items() if v}, **{k: v for k, v in result_pi.items() if v}}
+    if best_pi:
+        new_pipeline["patient_info"] = best_pi
+    if new_pipeline:
+        try:
+            await chat_store.save_pipeline_state(chat_id, new_pipeline)
+        except Exception:
+            pass
 
-    if _report_requested(request.message):
-        missing = _missing_patient_fields(patient_info)
-        if missing:
-            final_response += (
-                "\n\nFor a fuller report profile, please share: "
-                + ", ".join(missing)
-                + "."
-            )
+    # Report URL comes exclusively from the agent graph.
+    report_url = result.get("report_url") if isinstance(result.get("report_url"), str) else None
+
+    if report_url and report_url not in final_response:
+        final_response = f"{final_response}\n\nReport: {report_url}"
 
     await chat_store.append_message(
         chat_id=chat_id,
@@ -471,6 +502,7 @@ async def chat_with_agent(request: ChatRequest) -> AgentResponse:
     bridged = ChatRequest(
         actor_id=request.actor_id,
         actor_role=actor_role,
+        actor_name=request.actor_name,
         message=request.message,
         session_id=chat_id,
         attachment=request.attachment,

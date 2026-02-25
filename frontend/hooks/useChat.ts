@@ -68,6 +68,7 @@ type TraceApiResponse = {
 
 type UseChatOptions = {
   actorId: string;
+  actorName?: string | null;
   actorRole: "doctor" | "patient";
   initialChatId?: string | null;
   openingMessage: string;
@@ -129,7 +130,7 @@ function toChatMessage(record: ChatMessageRecord): ChatMessage {
   };
 }
 
-export function useChat({ actorId, actorRole, initialChatId, openingMessage, patientId }: UseChatOptions) {
+export function useChat({ actorId, actorName, actorRole, initialChatId, openingMessage, patientId }: UseChatOptions) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [liveTrace, setLiveTrace] = useState<AgentTraceStep[]>([]);
@@ -287,6 +288,7 @@ export function useChat({ actorId, actorRole, initialChatId, openingMessage, pat
         const response = await fetch(`${API_BASE_URL}/chat/sessions/${currentChatId}/messages`, {
           body: JSON.stringify({
             actor_id: actorId,
+            actor_name: actorName ?? undefined,
             actor_role: actorRole,
             attachment: attachment ?? undefined,
             message: text || "Please analyze the attached file.",
