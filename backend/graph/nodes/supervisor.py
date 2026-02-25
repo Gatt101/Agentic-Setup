@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from loguru import logger
 
 from graph.state import AgentState
@@ -41,6 +41,37 @@ def _tool_to_agent(tool_name: str | None) -> str | None:
     return mapping.get(namespace)
 
 
+def _report_requested(state: AgentState) -> bool:
+    text = str(state.get("user_message") or "").lower()
+    return any(keyword in text for keyword in ("report", "pdf", "document"))
+
+
+def _forced_tool_call(state: AgentState) -> dict | None:
+    body_part = state.get("body_part")
+    detections = state.get("detections")
+    diagnosis = state.get("diagnosis")
+    triage = state.get("triage_result")
+    report_url = state.get("report_url")
+
+    if not body_part and state.get("image_data"):
+        return {"name": "vision_detect_body_part", "args": {}}
+
+    if body_part in {"hand", "leg"} and detections is None:
+        name = "vision_detect_hand_fracture" if body_part == "hand" else "vision_detect_leg_fracture"
+        return {"name": name, "args": {}}
+
+    if detections is not None and not diagnosis:
+        return {"name": "clinical_generate_diagnosis", "args": {}}
+
+    if diagnosis and not triage:
+        return {"name": "clinical_assess_triage", "args": {}}
+
+    if _report_requested(state) and diagnosis and triage and not report_url:
+        return {"name": "report_generate_patient_pdf", "args": {}}
+
+    return None
+
+
 async def supervisor_node(state: AgentState) -> dict:
     has_image_data = bool(state.get("image_data"))
     toolset = ALL_TOOLS if has_image_data else NON_VISION_TOOLS
@@ -70,7 +101,21 @@ async def supervisor_node(state: AgentState) -> dict:
 
     prompt_messages = [SystemMessage(content=SUPERVISOR_PROMPT), safety_context, image_context, *messages]
 
-    response = await llm.ainvoke(prompt_messages)
+    forced_call = _forced_tool_call(state)
+    if forced_call:
+        response = AIMessage(
+            content="",
+            tool_calls=[
+                {
+                    "id": f"forced_{iteration}_{forced_call['name']}",
+                    "type": "tool_call",
+                    "name": forced_call["name"],
+                    "args": forced_call["args"],
+                }
+            ],
+        )
+    else:
+        response = await llm.ainvoke(prompt_messages)
     called = [call.get("name", "") for call in getattr(response, "tool_calls", []) if call.get("name")]
     active_agent = _tool_to_agent(called[-1]) if called else state.get("current_agent")
 

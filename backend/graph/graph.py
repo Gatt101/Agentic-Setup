@@ -18,7 +18,29 @@ from graph.state import AgentState, base_state
 from services.chat_store import chat_store
 
 
+def _report_requested(state: AgentState) -> bool:
+    text = str(state.get("user_message") or "").lower()
+    keywords = ("report", "pdf", "document")
+    return any(keyword in text for keyword in keywords)
+
+
 def should_continue(state: AgentState) -> str:
+    diagnosis = state.get("diagnosis")
+    triage = state.get("triage_result")
+    report_url = state.get("report_url")
+    tool_calls_made = state.get("tool_calls_made", [])
+    report_tool_attempts = sum(
+        1 for name in tool_calls_made if name in {"report_generate_patient_pdf", "report_generate_clinician_pdf"}
+    )
+
+    if diagnosis and triage:
+        if not _report_requested(state):
+            return "response_builder"
+        if report_url:
+            return "response_builder"
+        if report_tool_attempts >= 1:
+            return "response_builder"
+
     if state.get("iteration_count", 0) >= settings.max_agent_iterations:
         return "error_handler"
     if state.get("error"):
@@ -91,7 +113,7 @@ async def run_agent(payload: dict) -> AgentState:
     logger.info("session={} agent_run_started", session_id)
 
     try:
-        result = await graph.ainvoke(state, config={"configurable": {"thread_id": session_id}})
+        result = await graph.ainvoke(state, config={"configurable": {"thread_id": f"{session_id}:{uuid4()}"}})
     except Exception as exc:
         logger.exception("session={} agent_run_failed", session_id)
         raise AgentExecutionError(str(exc)) from exc

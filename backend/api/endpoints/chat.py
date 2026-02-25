@@ -5,9 +5,11 @@ import base64
 import binascii
 import re
 from datetime import datetime
+from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query
+from langchain_core.messages import AIMessage, HumanMessage
 
 from api.schemas.requests import ChatRequest, ChatSessionCreateRequest, DoctorPatientAssignRequest
 from api.schemas.responses import AgentResponse, ChatMessageRecord, ChatSessionCreateResponse, ChatSessionSummary
@@ -15,6 +17,7 @@ from core.config import settings
 from core.exceptions import AgentExecutionError
 from graph.graph import run_agent
 from services.chat_store import chat_store
+from tools.report.patient_pdf import generate_patient_pdf_impl
 from tools.utils import decode_image_base64, strip_data_url
 from tools.vision.annotator import annotate_xray_image_impl
 
@@ -60,6 +63,65 @@ def _classify_attachment(attachment: str | None) -> str:
         return "document_or_other"
 
 
+def _extract_latest_image_data(history: list[dict]) -> str | None:
+    for item in reversed(history):
+        if str(item.get("sender_role") or "") != "user":
+            continue
+        candidate = item.get("attachment_data_url")
+        if not isinstance(candidate, str) or not candidate.strip():
+            continue
+        if _classify_attachment(candidate) != "image":
+            continue
+        return candidate
+    return None
+
+
+def _extract_patient_info(history: list[dict], current_message: str, patient_id: str) -> dict[str, Any]:
+    merged_text = "\n".join(
+        [
+            *(str(item.get("content") or "") for item in history[-24:]),
+            current_message,
+        ]
+    )
+
+    info: dict[str, Any] = {"patient_id": patient_id}
+
+    name_match = re.search(r"\bname\s*[:=-]\s*([A-Za-z][A-Za-z\s]{1,60})", merged_text, flags=re.IGNORECASE)
+    age_match = re.search(r"\bage\s*[:=-]\s*(\d{1,3})\b", merged_text, flags=re.IGNORECASE)
+    gender_match = re.search(
+        r"\b(gender|sex)\s*[:=-]\s*(male|female|other|non-binary|nonbinary)\b",
+        merged_text,
+        flags=re.IGNORECASE,
+    )
+    doctor_match = re.search(r"\bdoctor\s*[:=-]\s*([A-Za-z][A-Za-z\s\.]{1,60})", merged_text, flags=re.IGNORECASE)
+
+    if name_match:
+        info["name"] = name_match.group(1).strip()
+    if age_match:
+        try:
+            info["age"] = int(age_match.group(1))
+        except ValueError:
+            pass
+    if gender_match:
+        info["gender"] = gender_match.group(2).strip().title()
+    if doctor_match:
+        info["doctor"] = doctor_match.group(1).strip()
+
+    return info
+
+
+def _missing_patient_fields(patient_info: dict[str, Any]) -> list[str]:
+    missing = []
+    for key in ("name", "age", "gender"):
+        value = patient_info.get(key)
+        if isinstance(value, str) and value.strip():
+            continue
+        if key == "age" and isinstance(value, int):
+            continue
+        missing.append(key)
+    return missing
+
+
 def _agent_error_message(detail: str) -> str:
     normalized = detail.lower()
 
@@ -95,6 +157,28 @@ def _normalize_role(role: str) -> str:
     return value
 
 
+def _report_requested(text: str) -> bool:
+    lowered = text.lower()
+    return any(keyword in lowered for keyword in ("report", "pdf", "document"))
+
+
+def _history_to_langchain_messages(history: list[dict], current_user_message: str) -> list:
+    converted = []
+    recent_history = history[-24:]
+    for item in recent_history:
+        sender = str(item.get("sender_role") or "")
+        content = str(item.get("content") or "").strip()
+        if not content:
+            continue
+        if sender == "assistant":
+            converted.append(AIMessage(content=content))
+        else:
+            converted.append(HumanMessage(content=content))
+
+    converted.append(HumanMessage(content=current_user_message))
+    return converted
+
+
 async def _build_annotated_image(image_data: str | None, detections: object) -> str | None:
     if not image_data or not isinstance(detections, list):
         return None
@@ -104,6 +188,39 @@ async def _build_annotated_image(image_data: str | None, detections: object) -> 
         return None
     encoded = payload.get("annotated_image_base64")
     return encoded if isinstance(encoded, str) and encoded else None
+
+
+async def _ensure_patient_report(
+    report_requested: bool,
+    diagnosis: object,
+    triage: object,
+    patient_info: dict[str, Any],
+    image_base64: str | None,
+    detections: list[dict] | None,
+    annotated_image_base64: str | None,
+) -> str | None:
+    if not report_requested:
+        return None
+    if not isinstance(diagnosis, dict) or not isinstance(triage, dict):
+        return None
+
+    try:
+        payload = await generate_patient_pdf_impl(
+            diagnosis=diagnosis,
+            triage=triage,
+            patient_info=patient_info,
+            recommendations=[
+                str(triage.get("recommended_timeframe") or "Follow clinician guidance promptly."),
+                "Bring this report and annotated image for in-person review.",
+            ],
+            image_base64=image_base64,
+            detections=detections,
+            annotated_image_base64=annotated_image_base64,
+        )
+        generated_url = payload.get("pdf_url")
+        return generated_url if isinstance(generated_url, str) and generated_url else None
+    except Exception:
+        return None
 
 
 async def _ensure_session_access(chat_id: str, actor_id: str, actor_role: str) -> dict:
@@ -224,6 +341,9 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
     message = request.message
     attachment_kind = _classify_attachment(attachment)
     image_data = attachment if attachment_kind == "image" else None
+    history_before = await chat_store.get_messages(chat_id)
+    if image_data is None:
+        image_data = _extract_latest_image_data(history_before)
 
     if attachment_kind == "document_or_other":
         message = (
@@ -245,6 +365,7 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
     payload = {
         "session_id": chat_id,
         "user_message": message,
+        "messages": _history_to_langchain_messages(history_before, message),
         "image_data": image_data,
         "patient_id": session.get("patient_id") or request.patient_id,
         "location": request.location,
@@ -265,6 +386,34 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
     final_response = result.get("final_response") or "No response generated."
     assistant_message_id = str(uuid4())
     trace = result.get("agent_trace") or []
+    patient_info = _extract_patient_info(
+        history=history_before,
+        current_message=request.message,
+        patient_id=str(session.get("patient_id") or request.actor_id),
+    )
+    report_url = await _ensure_patient_report(
+        report_requested=_report_requested(request.message),
+        diagnosis=result.get("diagnosis"),
+        triage=result.get("triage_result"),
+        patient_info=patient_info,
+        image_base64=image_data,
+        detections=detections if isinstance(detections, list) else None,
+        annotated_image_base64=annotated_image_base64,
+    )
+    if not report_url:
+        report_url = result.get("report_url") if isinstance(result.get("report_url"), str) else None
+
+    if report_url and _report_requested(request.message) and report_url not in final_response:
+        final_response = f"{final_response}\n\nPatient report: {report_url}"
+
+    if _report_requested(request.message):
+        missing = _missing_patient_fields(patient_info)
+        if missing:
+            final_response += (
+                "\n\nFor a fuller report profile, please share: "
+                + ", ".join(missing)
+                + "."
+            )
 
     await chat_store.append_message(
         chat_id=chat_id,
@@ -284,7 +433,7 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
         diagnosis=result.get("diagnosis"),
         triage=result.get("triage_result"),
         hospitals=result.get("hospitals"),
-        report_url=result.get("report_url"),
+        report_url=report_url,
         annotated_image_base64=annotated_image_base64,
         agent_trace=trace,
     )
