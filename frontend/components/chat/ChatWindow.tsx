@@ -1,15 +1,16 @@
 "use client";
 
 import {
-  Conversation,
-  ConversationContent,
-  ConversationDownload,
-  ConversationEmptyState,
-  ConversationScrollButton,
+    Conversation,
+    ConversationContent,
+    ConversationDownload,
+    ConversationEmptyState,
+    ConversationScrollButton,
 } from "@/components/ai-elements/conversation";
 import type { PromptInputMessage } from "@/components/ai-elements/prompt-input";
 import { Card } from "@/components/ui/card";
 import { type ChatAttachment, useChat } from "@/hooks/useChat";
+import { useUser } from "@clerk/nextjs";
 import { MessageCircleIcon } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo } from "react";
@@ -135,11 +136,14 @@ export function ChatWindow({ actorId, mode, patientId }: ChatWindowProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const currentChatId = searchParams.get("chat_id");
+  const { user } = useUser();
+  const actorName = user?.fullName ?? user?.firstName ?? undefined;
   const patientIdFromQuery = searchParams.get("patient_id") || undefined;
 
   const { chatId, messages, isLoading, liveTrace, error, sendMessage, stop } = useChat({
     actorId,
     actorRole: mode,
+    actorName: actorName ?? undefined,
     initialChatId: currentChatId,
     openingMessage: openingMessageByMode[mode],
     patientId: patientId ?? patientIdFromQuery,

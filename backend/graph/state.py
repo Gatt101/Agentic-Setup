@@ -14,14 +14,19 @@ class AgentState(TypedDict, total=False):
     symptoms: str | None
     patient_id: str | None
     location: str | None
+    actor_role: str | None        # "doctor" or "patient"
+    actor_name: str | None        # display name from Clerk
 
     # Discovered during execution
     body_part: str | None
     detections: list[dict] | None
     diagnosis: dict[str, Any] | None
     triage_result: dict[str, Any] | None
+    knowledge_context: dict[str, Any] | None
     hospitals: list[dict] | None
     report_url: str | None
+    patient_info: dict[str, Any] | None   # name, age, gender, doctor, body_part collected from conversation
+    pending_report_actor_role: str | None  # set when a report was requested but gated on missing patient info
 
     # LangGraph internals
     messages: Annotated[list[BaseMessage], add_messages]
@@ -45,6 +50,8 @@ def base_state() -> AgentState:
         "triage_result": None,
         "hospitals": None,
         "report_url": None,
+        "patient_info": None,
+        "pending_report_actor_role": None,
         "messages": [],
         "tool_calls_made": [],
         "agent_trace": [],

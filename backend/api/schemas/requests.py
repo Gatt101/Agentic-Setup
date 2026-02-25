@@ -16,6 +16,7 @@ class AnalyzeRequest(BaseModel):
 class ChatRequest(BaseModel):
     actor_id: str
     actor_role: str = "patient"
+    actor_name: str | None = None  # display name from Clerk, used in PDF doctor field
     message: str
     session_id: str | None = None
     attachment: str | None = None
