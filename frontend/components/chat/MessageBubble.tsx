@@ -1,9 +1,9 @@
 "use client";
 
 import {
-  Message,
-  MessageContent,
-  MessageResponse,
+    Message,
+    MessageContent,
+    MessageResponse,
 } from "@/components/ai-elements/message";
 import type { AgentTraceStep, ChatAttachment } from "@/hooks/useChat";
 import { cn } from "@/lib/utils";
@@ -18,6 +18,13 @@ type MessageBubbleProps = {
   role: ChatRole;
   trace?: AgentTraceStep[];
 };
+
+/** Strip trailing `\n\nReport: <url>` lines injected by the backend and return them separately. */
+function extractReportUrl(text: string): { body: string; reportUrl: string | null } {
+  const match = text.match(/\n\nReport:\s*(https?:\/\/\S+)\s*$/);
+  if (!match) return { body: text, reportUrl: null };
+  return { body: text.slice(0, match.index), reportUrl: match[1] };
+}
 
 function formatTraceStep(step: AgentTraceStep): string {
   if (step.type === "supervisor_decision") {
@@ -34,6 +41,7 @@ function formatTraceStep(step: AgentTraceStep): string {
 
 export function MessageBubble({ attachment, content, role, trace }: MessageBubbleProps) {
   const isUser = role === "user";
+  const { body, reportUrl } = !isUser ? extractReportUrl(content) : { body: content, reportUrl: null };
 
   return (
     <Message from={role}>
@@ -46,12 +54,28 @@ export function MessageBubble({ attachment, content, role, trace }: MessageBubbl
               : "border-slate-200 bg-white text-slate-800 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-100"
           )}
         >
-          {content ? (
+          {body ? (
             isUser ? (
-              <p className="m-0 whitespace-pre-wrap text-[15px] leading-relaxed">{content}</p>
+              <p className="m-0 whitespace-pre-wrap text-[15px] leading-relaxed">{body}</p>
             ) : (
-              <MessageResponse className="text-[15px] leading-relaxed">{content}</MessageResponse>
+              <MessageResponse className="text-[15px] leading-relaxed">{body}</MessageResponse>
             )
+          ) : null}
+          {reportUrl ? (
+            <a
+              href={reportUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-3 flex w-fit items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 transition-colors hover:bg-blue-100 dark:border-blue-700 dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-900/50"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+                <line x1="12" y1="18" x2="12" y2="12"/>
+                <line x1="9" y1="15" x2="15" y2="15"/>
+              </svg>
+              Download Report (PDF)
+            </a>
           ) : null}
           {attachment ? <AttachmentPreview attachment={attachment} /> : null}
           {role === "assistant" && Array.isArray(trace) && trace.length > 0 ? (
