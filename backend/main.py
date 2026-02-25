@@ -1,7 +1,6 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
 from api.middleware import setup_middleware
@@ -35,9 +34,6 @@ def create_app() -> FastAPI:
 
     setup_middleware(app)
     app.include_router(api_router, prefix="/api")
-
-    # Serve generated PDFs and uploaded images under /storage/*
-    app.mount("/storage", StaticFiles(directory=str(settings.resolved_storage_path)), name="storage")
 
     return app
 
