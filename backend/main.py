@@ -1,4 +1,7 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
 from api.middleware import setup_middleware
@@ -9,28 +12,31 @@ from services.mongo import mongo_service
 from services.storage import storage_service
 
 
-def create_app() -> FastAPI:
-    configure_logging()
+@asynccontextmanager
+async def lifespan(app: FastAPI):  # noqa: ARG001
+    logger.info("OrthoAssist backend starting up...")
+    await storage_service.initialize()
+    await mongo_service.initialize()
+    logger.info("OrthoAssist startup complete. Storage and MongoDB ready.")
+    yield
+    await mongo_service.close()
+    logger.info("OrthoAssist backend shut down.")
 
+
+def create_app() -> FastAPI:
+    configure_logging()  # set up loguru early so uvicorn logs are intercepted from the start
     app = FastAPI(
         title="OrthoAssist Backend",
         version="0.1.0",
         description="Agentic orthopedic backend with FastAPI, LangGraph, and MCP",
+        lifespan=lifespan,
     )
 
     setup_middleware(app)
     app.include_router(api_router, prefix="/api")
 
-    @app.on_event("startup")
-    async def startup_event() -> None:
-        logger.info("OrthoAssist backend starting up...")
-        await storage_service.initialize()
-        await mongo_service.initialize()
-        logger.info("OrthoAssist startup complete. Storage and MongoDB ready.")
-
-    @app.on_event("shutdown")
-    async def shutdown_event() -> None:
-        await mongo_service.close()
+    # Serve generated PDFs and uploaded images under /storage/*
+    app.mount("/storage", StaticFiles(directory=str(settings.resolved_storage_path)), name="storage")
 
     return app
 

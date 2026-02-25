@@ -27,6 +27,7 @@ class ChatRequest(BaseModel):
 class ChatSessionCreateRequest(BaseModel):
     actor_id: str
     actor_role: str = "patient"
+    actor_name: str | None = None  # display name used in the greeting
     patient_id: str | None = None
     title: str | None = None
 

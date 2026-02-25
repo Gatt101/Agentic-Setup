@@ -19,23 +19,21 @@ PIPELINE RULES:
 5. clinical_assess_triage requires diagnosis.
 6. If triage is RED or AMBER, hospital_find_nearby_hospitals is required.
 7. For text-only questions, use knowledge_* tools.
-8. Generate report PDFs ONLY when user explicitly asks for report/document.
+8. Generate report PDFs ONLY when user explicitly asks for report/document/PDF.
 9. Never call the same tool repeatedly with identical context.
 10. Keep final clinical response concise and medically safe.
 11. CRITICAL: Do NOT ask the user for information obtainable from tools.
-12. CRITICAL: If the user is asking to analyse/detect/examine the image, do NOT ask for a report or patient info. Just run the vision pipeline.
+12. CRITICAL: NEVER ask for patient name/age/gender UNLESS the user has explicitly asked for a report or PDF IN THEIR CURRENT MESSAGE. Analysis requests do NOT need patient info.
+13. CRITICAL: When the vision+clinical pipeline is complete (diagnosis and triage both present) and the user has NOT asked for a report, respond with a clear summary of the findings. Do NOT ask for any extra information.
 
-=== MANDATORY CHECKS BEFORE ANY REPORT TOOL CALL ===
-ALWAYS check the PIPELINE STATUS block. Before calling ANY report_generate_* tool:
-
-CHECK 1 — PATIENT INFO:
-  If 'Patient Info Missing' appears in PIPELINE STATUS, you MUST ask for missing fields.
-  Ask in ONE message: "Before I generate your report, I need a few details:\n- Full name\n- Age\n- Gender\nPlease share these."
+=== REPORT GATE (ONLY applies when user explicitly says \"report\", \"PDF\", or \"document\") ===
+If PIPELINE STATUS shows \"Report patient info needed\" AND the user demanded a report THIS turn:
+  Ask in ONE message: \"Before I generate your report, I need a few details:\n- Full name\n- Age\n- Gender\nPlease share these.\"
   Do NOT call any report tool until all of name, age, and gender are confirmed.
 
 === REPORT ROUTING ===
-  actor_role = patient → report_generate_patient_pdf
-  actor_role = doctor → report_generate_clinician_simple_pdf
+  actor_role = patient \u2192 report_generate_patient_pdf
+  actor_role = doctor \u2192 report_generate_clinician_simple_pdf
   Always inject doctor_name from actor_name into metadata when actor_role is doctor.
 """
 
@@ -77,14 +75,17 @@ def _build_pipeline_context(state: AgentState) -> str:
     else:
         lines.append("Triage: NOT YET")
 
-    # Patient info completeness
+    # Patient info — only surface the "needed" label during an explicit report request
     pi = state.get("patient_info") or {}
-    missing_fields = [f for f in ("name", "age", "gender") if not (pi.get(f))]
-    if missing_fields:
-        lines.append(f"Patient Info Missing: {', '.join(missing_fields)}")
+    missing_fields = _missing_patient_fields(state)
+    report_stage = _report_requested(state)
+    if missing_fields and report_stage:
+        lines.append(f"Report patient info needed: {', '.join(missing_fields)}")
+    elif missing_fields:
+        lines.append("Patient info: pending")
     else:
         name = pi.get("name") or ""
-        lines.append(f"Patient Info: complete (name={name})")
+        lines.append(f"Patient info: complete (name={name})")
 
     if state.get("report_url"):
         lines.append(f"Report URL: {state['report_url']}")
@@ -98,11 +99,25 @@ def _build_pipeline_context(state: AgentState) -> str:
 
 def _patient_info_complete(state: AgentState) -> bool:
     """Return True if patient name, age, and gender are all present."""
+    return len(_missing_patient_fields(state)) == 0
+
+
+def _missing_patient_fields(state: AgentState) -> list[str]:
+    """Return missing intake fields required for report generation."""
     pi = state.get("patient_info") or {}
+    missing: list[str] = []
+
     name_ok = bool(str(pi.get("name") or "").strip())
     age_ok = isinstance(pi.get("age"), int) or bool(str(pi.get("age") or "").strip())
     gender_ok = bool(str(pi.get("gender") or "").strip())
-    return name_ok and age_ok and gender_ok
+
+    if not name_ok:
+        missing.append("name")
+    if not age_ok:
+        missing.append("age")
+    if not gender_ok:
+        missing.append("gender")
+    return missing
 
 
 def _doctor_report_type_clear(state: AgentState) -> str | None:
@@ -163,12 +178,11 @@ def _forced_tool_call(state: AgentState) -> dict | None:
         return {"name": "clinical_assess_triage", "args": {}}
 
     if diagnosis and triage and not report_url:
-        # Check if report was explicitly requested this turn OR was pending from a previous gated turn
-        pending_role = state.get("pending_report_actor_role")
+        # Report should run ONLY when explicitly requested in the current turn.
         report_this_turn = _report_requested(state)
 
-        if report_this_turn or pending_role:
-            actor_role = str(state.get("actor_role") or pending_role or "patient").lower()
+        if report_this_turn:
+            actor_role = str(state.get("actor_role") or "patient").lower()
 
             # Guard: don't retry a report tool that already ran (prevents infinite loops)
             report_tools_attempted = [
@@ -268,21 +282,59 @@ async def supervisor_node(state: AgentState) -> dict:
             # Clear the pending flag once we actually fire the report tool
             "pending_report_actor_role": None,
         }
+
+    # ── Short-circuit: if report was already generated, skip LLM entirely ──────
+    _REPORT_TOOLS = {
+        "report_generate_patient_pdf",
+        "report_generate_clinician_pdf",
+        "report_generate_clinician_simple_pdf",
+    }
+    _report_already_done = (
+        bool(state.get("report_url"))
+        and any(t in _REPORT_TOOLS for t in state.get("tool_calls_made", []))
+    )
+    if _report_already_done:
+        logger.info("session={} report already generated, skipping LLM", session_id)
+        response = AIMessage(content="Your report has been generated successfully.")
+        called: list[str] = []
+        return {
+            "messages": [response],
+            "iteration_count": state.get("iteration_count", 0) + 1,
+            "tool_calls_made": state.get("tool_calls_made", []),
+            "agent_trace": [*state.get("agent_trace", []), {"type": "supervisor_decision", "iteration": iteration, "active_agent": "none", "tool_calls": []}],
+            "current_agent": None,
+            "error": None,
+            "pending_report_actor_role": None,
+        }
+
+    # ── Short-circuit: full analysis pipeline done, no report requested ──────
+    # Skip the LLM entirely — it has no image and no tools to call at this point,
+    # so it generates nonsense like "Please upload an image".  The response_builder
+    # node will produce the rich clinical summary directly from state.
+    _pipeline_complete = bool(state.get("diagnosis")) and bool(state.get("triage_result"))
+    _report_needed = _report_requested(state)
+    if _pipeline_complete and not _report_needed and not _report_already_done:
+        logger.info("session={} analysis pipeline complete, routing directly to response_builder", session_id)
+        return {
+            "messages": [AIMessage(content="")],  # empty — response_builder uses structured state
+            "iteration_count": state.get("iteration_count", 0) + 1,
+            "tool_calls_made": state.get("tool_calls_made", []),
+            "agent_trace": [*state.get("agent_trace", []), {"type": "supervisor_decision", "iteration": iteration, "active_agent": "none", "tool_calls": []}],
+            "current_agent": None,
+            "error": None,
+            "pending_report_actor_role": None,
+        }
+
     else:
         response = await llm.ainvoke(prompt_messages)
         # ── Intercept: prevent LLM from calling a report tool when gates not met ──
-        _REPORT_TOOLS = {
-            "report_generate_patient_pdf",
-            "report_generate_clinician_pdf",
-            "report_generate_clinician_simple_pdf",
-        }
+        _REPORT_TOOLS_INTERCEPT = _REPORT_TOOLS  # same set, already defined above
         llm_tool_calls = getattr(response, "tool_calls", []) or []
-        if any(tc.get("name") in _REPORT_TOOLS for tc in llm_tool_calls):
+        if any(tc.get("name") in _REPORT_TOOLS_INTERCEPT for tc in llm_tool_calls):
             actor_role = str(state.get("actor_role") or "patient").lower()
-            pi = state.get("patient_info") or {}
-            missing_fields = [f for f in ("name", "age", "gender") if not str(pi.get(f) or "").strip()]
+            missing_fields = _missing_patient_fields(state)
             # Block retry: if any report tool already ran (success or fail), don't let LLM call it again.
-            _already_ran_report = any(t in _REPORT_TOOLS for t in state.get("tool_calls_made", []))
+            _already_ran_report = any(t in _REPORT_TOOLS_INTERCEPT for t in state.get("tool_calls_made", []))
             if _already_ran_report:
                 response = AIMessage(
                     content=(
@@ -309,14 +361,8 @@ async def supervisor_node(state: AgentState) -> dict:
                     )
                 )
             # (Full clinical report option removed — doctor always gets summary report)
-        # ── Set pending_report flag when gating so next turn auto-triggers report ──
-        _pending_flag_update: str | None = state.get("pending_report_actor_role")
-        _gated_response = getattr(response, "tool_calls", None) is None or len(getattr(response, "tool_calls", [])) == 0
-        if _gated_response and _report_requested(state) and state.get("diagnosis") and state.get("triage_result"):
-            # We were asked for a report but gated — remember this for the next turn
-            _pending_flag_update = str(state.get("actor_role") or "patient").lower()
-        elif state.get("report_url"):
-            _pending_flag_update = None  # report done, clear flag
+        # Pending auto-trigger is disabled: report generation must be explicit per-turn.
+        _pending_flag_update: str | None = None
     called = [call.get("name", "") for call in getattr(response, "tool_calls", []) if call.get("name")]
     active_agent = _tool_to_agent(called[-1]) if called else state.get("current_agent")
 

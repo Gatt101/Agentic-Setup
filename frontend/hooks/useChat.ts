@@ -204,6 +204,7 @@ export function useChat({ actorId, actorName, actorRole, initialChatId, openingM
     const response = await fetch(`${API_BASE_URL}/chat/sessions`, {
       body: JSON.stringify({
         actor_id: actorId,
+        actor_name: actorName ?? undefined,
         actor_role: actorRole,
         patient_id: patientId ?? undefined,
         title: deriveChatTitle(preferredTitle),

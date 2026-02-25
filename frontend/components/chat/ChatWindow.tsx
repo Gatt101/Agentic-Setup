@@ -16,9 +16,9 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo } from "react";
 
 import {
-  Reasoning,
-  ReasoningContent,
-  ReasoningTrigger,
+    Reasoning,
+    ReasoningContent,
+    ReasoningTrigger,
 } from "@/components/ai-elements/reasoning";
 import type { AgentTraceStep } from "@/hooks/useChat";
 
@@ -33,12 +33,40 @@ type ChatWindowProps = {
   patientId?: string;
 };
 
-const openingMessageByMode: Record<ChatWindowMode, string> = {
-  doctor:
-    "I am ready to assist with orthopedic triage, differential context, and report drafting.",
-  patient:
-    "I can help explain your report in plain language and suggest practical next steps.",
-};
+function buildOpeningMessage(mode: ChatWindowMode, name?: string | null): string {
+  const salutation =
+    name
+      ? mode === "doctor"
+        ? `Hello, Dr. ${name}! 👋`
+        : `Hello, ${name}! 👋`
+      : mode === "doctor"
+        ? "Hello, Doctor! 👋"
+        : "Hello! 👋";
+
+  if (mode === "doctor") {
+    return (
+      `${salutation} I'm **OrthoAssist**, your AI-powered orthopedic assistant.\n\n` +
+      `Before we start, please share your **patient's details** so I can personalise the analysis and include them in any generated reports:\n\n` +
+      `- **Full Name**\n` +
+      `- **Age**\n` +
+      `- **Gender** (Male / Female / Other)\n\n` +
+      `You can type them in one go, e.g.:\n` +
+      `> *Name: John Smith, Age: 45, Gender: Male*\n\n` +
+      `Once you've shared those, upload an X-ray or describe the case and I'll begin the analysis!`
+    );
+  }
+
+  return (
+    `${salutation} I'm **OrthoAssist**, your AI-powered orthopedic assistant.\n\n` +
+    `Before we start, please share a few details so I can personalise your analysis and any reports generated for you:\n\n` +
+    `- **Your Full Name**\n` +
+    `- **Age**\n` +
+    `- **Gender** (Male / Female / Other)\n\n` +
+    `You can type them in one go, e.g.:\n` +
+    `> *Name: Sarah Jones, Age: 34, Gender: Female*\n\n` +
+    `After that, upload your X-ray image and I'll analyse it for you!`
+  );
+}
 
 function isSupportedDocType(mediaType: string | undefined): boolean {
   if (!mediaType) {
@@ -167,7 +195,7 @@ export function ChatWindow({ actorId, mode, patientId }: ChatWindowProps) {
     actorRole: mode,
     actorName: actorName ?? undefined,
     initialChatId: currentChatId,
-    openingMessage: openingMessageByMode[mode],
+    openingMessage: buildOpeningMessage(mode, actorName),
     patientId: patientId ?? patientIdFromQuery,
   });
 
