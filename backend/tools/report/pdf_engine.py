@@ -48,6 +48,10 @@ _LOGO_FALLBACK_PUBLIC = Path(__file__).resolve().parents[3] / "frontend" / "publ
 # ── Human-readable patient ID ─────────────────────────────────────────────────
 def human_readable_patient_id(raw_id: str) -> str:
     """Deterministically map any raw ID (MongoDB ObjectId, UUID, etc.) to PT-YYYY-XXXXXX."""
+    raw = str(raw_id or "").strip().upper()
+    if re.fullmatch(r"PT-\d{4}-[A-F0-9]{6}", raw):
+        return raw
+
     clean = re.sub(r"[^a-zA-Z0-9]", "", str(raw_id))
     hash_suffix = hashlib.md5(clean.encode()).hexdigest()[:6].upper()
     year = datetime.now(UTC).year

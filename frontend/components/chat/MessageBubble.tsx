@@ -19,11 +19,21 @@ type MessageBubbleProps = {
   trace?: AgentTraceStep[];
 };
 
-/** Strip trailing `\n\nReport: <url>` lines injected by the backend and return them separately. */
+/** Strip trailing `\n\nReport: <url>` lines injected by the backend and return them separately.
+ * Handles both absolute (https://...) and relative (/storage/...) URLs. */
 function extractReportUrl(text: string): { body: string; reportUrl: string | null } {
-  const match = text.match(/\n\nReport:\s*(https?:\/\/\S+)\s*$/);
+  // Match both absolute URLs (https://...) and relative paths (/storage/...)
+  const match = text.match(/\n\nReport:\s*((?:https?:\/\/|\/)\S+)\s*$/);
   if (!match) return { body: text, reportUrl: null };
-  return { body: text.slice(0, match.index), reportUrl: match[1] };
+  let url = match[1];
+  // Relative path — prepend the backend origin so the browser fetches from the API server
+  if (url.startsWith('/')) {
+    const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000/api';
+    // Strip the /api suffix to get the bare origin (e.g. http://localhost:8000)
+    const origin = apiBase.replace(/\/api\/?$/, '');
+    url = `${origin}${url}`;
+  }
+  return { body: text.slice(0, match.index), reportUrl: url };
 }
 
 function formatTraceStep(step: AgentTraceStep): string {

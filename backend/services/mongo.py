@@ -55,6 +55,16 @@ class MongoService:
         await db.kb_chunks.create_index([("document_id", 1)])
         await db.kb_chunks.create_index([("patient_id", 1), ("created_at", -1)])
 
+        # patients
+        await db.patients.create_index([("patient_id", 1)], unique=True)
+        await db.patients.create_index([("doctor_user_id", 1), ("updated_at", -1)])
+        await db.patients.create_index([("patient_user_id", 1), ("updated_at", -1)])
+
+        # reports
+        await db.reports.create_index([("report_id", 1)], unique=True)
+        await db.reports.create_index([("doctor_user_id", 1), ("created_at", -1)])
+        await db.reports.create_index([("patient_id", 1), ("created_at", -1)])
+
     async def close(self) -> None:
         if self._client is not None:
             self._client.close()

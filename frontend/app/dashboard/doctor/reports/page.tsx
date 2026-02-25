@@ -1,4 +1,5 @@
 import { getDoctorReports } from "@/lib/data/loaders";
+import { auth } from "@clerk/nextjs/server";
 
 const severityClassName: Record<"AMBER" | "GREEN" | "RED", string> = {
   AMBER:
@@ -9,7 +10,8 @@ const severityClassName: Record<"AMBER" | "GREEN" | "RED", string> = {
 };
 
 export default async function DoctorReportsPage() {
-  const reports = await getDoctorReports();
+  const { userId } = await auth();
+  const reports = await getDoctorReports(userId ?? undefined);
 
   return (
     <main className="space-y-4 p-6">

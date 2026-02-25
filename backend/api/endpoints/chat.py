@@ -18,6 +18,8 @@ from core.config import settings
 from core.exceptions import AgentExecutionError
 from graph.graph import run_agent
 from services.chat_store import chat_store
+from services.mongo import mongo_service
+from services.patient_store import patient_store
 from tools.report.patient_pdf import generate_patient_pdf_impl
 from tools.utils import decode_image_base64, strip_data_url
 from tools.vision.annotator import annotate_xray_image_impl
@@ -89,17 +91,17 @@ def _extract_patient_info(history: list[dict], current_message: str, patient_id:
 
     info: dict[str, Any] = {"patient_id": patient_id}
 
-    # Accept: "name: John", "name = John", "name - John", "name John", "name chiarg"
+    # Accept: "name: John", "full name: John", "name = John", "name - John"
     name_match = re.search(
-        r"\bname\s*[:=\-]?\s*([A-Za-z][A-Za-z\s\.]{1,60})(?:[,\n]|$)",
+        r"\b(?:full\s*name|name)\s*[:=\-]?\s*([A-Za-z][A-Za-z\s\.\'-]{1,60})(?:[,\n]|$)",
         merged_text,
         flags=re.IGNORECASE,
     )
     # Accept: "age: 33", "age = 33", "age 33"
-    age_match = re.search(r"\bage\s*[:=\-]?\s*(\d{1,3})\b", merged_text, flags=re.IGNORECASE)
-    # Accept: "gender: male", "gender = male", "gemder = male" (typo tolerance via loose prefix)
+    age_match = re.search(r"\b(?:age|aged)\s*[:=\-]?\s*(\d{1,3})\b", merged_text, flags=re.IGNORECASE)
+    # Accept: "gender: male", "gender = male", "gender: m", "gemder = male"
     gender_match = re.search(
-        r"\bge[nm]de?r?\s*[:=\-]?\s*(male|female|other|non-binary|nonbinary)\b",
+        r"\bge[nm]de?r?\s*[:=\-]?\s*(male|female|other|non-binary|nonbinary|m|f)\b",
         merged_text,
         flags=re.IGNORECASE,
     )
@@ -113,7 +115,13 @@ def _extract_patient_info(history: list[dict], current_message: str, patient_id:
         except ValueError:
             pass
     if gender_match:
-        info["gender"] = gender_match.group(1).strip().title()
+        raw_gender = gender_match.group(1).strip().lower()
+        if raw_gender == "m":
+            info["gender"] = "Male"
+        elif raw_gender == "f":
+            info["gender"] = "Female"
+        else:
+            info["gender"] = raw_gender.title()
     if doctor_match:
         info["doctor"] = doctor_match.group(1).strip()
 
@@ -289,6 +297,51 @@ async def create_chat_session(request: ChatSessionCreateRequest) -> ChatSessionC
         doctor_id=doctor_id,
         title=title,
     )
+
+    # ── Inject intake greeting so the first thing the user sees is a request
+    #    for patient details — used for report generation and analysis.
+    clean_name = (request.actor_name or "").strip()
+    if clean_name.startswith("user_") or not any(c.isalpha() for c in clean_name):
+        clean_name = ""
+
+    if actor_role == "doctor":
+        salutation = f"Hello, Dr. {clean_name}!" if clean_name else "Hello, Doctor!"
+        greeting = (
+            f"👋 {salutation} I'm **OrthoAssist**, your AI-powered orthopedic assistant.\n\n"
+            "To get started, please provide your **patient's details** so I can personalise "
+            "the analysis and include them in any reports:\n\n"
+            "- **Full Name**\n"
+            "- **Age**\n"
+            "- **Gender** (Male / Female / Other)\n\n"
+            "You can type them in one message, e.g.:\n"
+            "> *Name: John Smith, Age: 45, Gender: Male*\n\n"
+            "Once you share those, upload an X-ray or describe the case and I'll begin the analysis!"
+        )
+    else:
+        salutation = f"Hello, {clean_name}!" if clean_name else "Hello!"
+        greeting = (
+            f"👋 {salutation} I'm **OrthoAssist**, your AI-powered orthopedic assistant.\n\n"
+            "Before we begin, please share a few details so I can personalise your analysis "
+            "and any reports generated for you:\n\n"
+            "- **Your Full Name**\n"
+            "- **Age**\n"
+            "- **Gender** (Male / Female / Other)\n\n"
+            "You can type them in one message, e.g.:\n"
+            "> *Name: Sarah Jones, Age: 34, Gender: Female*\n\n"
+            "After that, upload your X-ray image and I'll analyse it for you!"
+        )
+
+    greet_id = str(uuid4())
+    try:
+        await chat_store.append_message(
+            chat_id=chat_id,
+            message_id=greet_id,
+            sender_role="assistant",
+            content=greeting,
+        )
+    except Exception:
+        pass  # greeting failure must never block session creation
+
     return ChatSessionCreateResponse(chat_id=chat_id, title=title)
 
 
@@ -399,6 +452,8 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
     # ── Load persisted clinical pipeline state from previous turns ────────────
     pipeline_state = await chat_store.get_pipeline_state(chat_id)
     stored_patient_info: dict = pipeline_state.pop("patient_info", {}) or {}
+    # mongo_patient_id is our internal tracking key — exclude from agent payload
+    _existing_mongo_patient_id: str | None = pipeline_state.pop("mongo_patient_id", None)
 
     # Detect whether this message is an analysis request (not a report request)
     _msg_lower = message.lower().strip()
@@ -423,16 +478,107 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
 
     # Merge persisted patient_info with freshly-extracted one (fresh extraction wins for present fields)
     merged_patient_info = {**stored_patient_info, **{k: v for k, v in patient_info.items() if v}}
+    if _existing_mongo_patient_id:
+        merged_patient_info["patient_id"] = _existing_mongo_patient_id
 
     logger.info("chat_id={} actor_role={} fresh_image={} patient_info_keys={}",
                 chat_id, actor_role, fresh_image, list(merged_patient_info.keys()))
+
+    # ── Fast-path: pure intake message (name/age/gender, no image, no analysis/report keyword) ──
+    # Skip the agent entirely so the LLM never gets a chance to re-ask for info
+    # or incorrectly fire the report gate.
+    _pi_name = str(merged_patient_info.get("name") or "").strip()
+    _pi_age = merged_patient_info.get("age")
+    _pi_gender = str(merged_patient_info.get("gender") or "").strip()
+    _intake_complete = bool(_pi_name) and (_pi_age is not None) and bool(_pi_gender)
+    _intake_fields_mentioned = ("name" in _msg_lower or "age" in _msg_lower or "gender" in _msg_lower)
+    if _intake_complete and mongo_service.enabled and (_existing_mongo_patient_id is None or _intake_fields_mentioned):
+        try:
+            _upserted_pre = await patient_store.upsert_patient(
+                name=_pi_name,
+                age=int(_pi_age) if _pi_age is not None else None,
+                gender=_pi_gender,
+                doctor_user_id=request.actor_id if actor_role == "doctor" else None,
+                patient_user_id=request.actor_id if actor_role == "patient" else None,
+                chat_id=chat_id,
+                existing_patient_id=_existing_mongo_patient_id,
+            )
+            _existing_mongo_patient_id = str(_upserted_pre["patient_id"])
+            merged_patient_info["patient_id"] = _existing_mongo_patient_id
+            logger.info("chat_id={} intake patient upserted patient_id={}", chat_id, _existing_mongo_patient_id)
+        except Exception as _pre_upsert_err:
+            logger.warning("chat_id={} pre-agent patient upsert failed: {}", chat_id, _pre_upsert_err)
+
+    _is_intake_only = (
+        not fresh_image
+        and not any(k in _msg_lower for k in _ANALYSIS_KEYWORDS)
+        and not any(k in _msg_lower for k in _REPORT_KEYWORDS)
+        and _intake_complete
+        # Make sure the message actually contains the intake info (not a random sentence
+        # that happens to match old stored data)
+        and _intake_fields_mentioned
+    )
+
+    if _is_intake_only:
+        logger.info("chat_id={} intake fast-path: name={} age={} gender={}", chat_id, _pi_name, _pi_age, _pi_gender)
+
+        # Persist patient info immediately
+        _intake_pipeline: dict = {
+            "patient_info": merged_patient_info,
+            "pending_report_actor_role": pipeline_state.get("pending_report_actor_role"),
+        }
+        if _existing_mongo_patient_id:
+            _intake_pipeline["mongo_patient_id"] = _existing_mongo_patient_id
+        try:
+            await chat_store.save_pipeline_state(chat_id, _intake_pipeline)
+        except Exception:
+            pass
+
+        # Build acknowledgment
+        _gender_str = _pi_gender.lower()
+        _pronoun = "his" if _gender_str == "male" else "her" if _gender_str == "female" else "their"
+        if actor_role == "doctor":
+            _ack = (
+                f"✅ Got it! Patient details saved:\n\n"
+                f"- **Name:** {_pi_name}\n"
+                f"- **Age:** {_pi_age}\n"
+                f"- **Gender:** {_pi_gender.capitalize()}\n"
+                + (f"- **Patient ID:** `{_existing_mongo_patient_id}`\n" if _existing_mongo_patient_id else "")
+                + f"\nNow please **upload the X-ray image** and I'll begin the orthopedic analysis for {_pronoun} case."
+            )
+        else:
+            _ack = (
+                f"✅ Thanks! I've noted your details:\n\n"
+                f"- **Name:** {_pi_name}\n"
+                f"- **Age:** {_pi_age}\n"
+                f"- **Gender:** {_pi_gender.capitalize()}\n"
+                + (f"- **Patient ID:** `{_existing_mongo_patient_id}`\n" if _existing_mongo_patient_id else "")
+                + "\n"
+                f"Now please **upload your X-ray image** and I'll analyse it for you!"
+            )
+
+        _ack_msg_id = str(uuid4())
+        await chat_store.append_message(
+            chat_id=chat_id,
+            message_id=_ack_msg_id,
+            sender_role="assistant",
+            content=_ack,
+        )
+        return AgentResponse(
+            chat_id=chat_id,
+            message_id=_ack_msg_id,
+            session_id=chat_id,
+            final_response=_ack,
+            agent_trace=[],
+        )
+    # ── End fast-path ──────────────────────────────────────────────────────────
 
     payload = {
         "session_id": chat_id,
         "user_message": message,
         "messages": _history_to_langchain_messages(history_before, message),
         "image_data": image_data,
-        "patient_id": session.get("patient_id") or request.patient_id,
+        "patient_id": _existing_mongo_patient_id or session.get("patient_id") or request.patient_id,
         "location": request.location,
         "actor_role": actor_role,
         "actor_name": clean_actor_name or "",
@@ -472,8 +618,54 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
     # Merge patient_info: stored + newly extracted, always keep the most complete version
     result_pi = result.get("patient_info") or {}
     best_pi = {**stored_patient_info, **{k: v for k, v in merged_patient_info.items() if v}, **{k: v for k, v in result_pi.items() if v}}
+    if _existing_mongo_patient_id:
+        best_pi["patient_id"] = _existing_mongo_patient_id
     if best_pi:
         new_pipeline["patient_info"] = best_pi
+
+    # ── Upsert patient record in MongoDB once all 3 intake fields are present ──
+    _pi_complete = (
+        bool(str(best_pi.get("name") or "").strip())
+        and best_pi.get("age") is not None
+        and bool(str(best_pi.get("gender") or "").strip())
+    )
+    if _pi_complete and mongo_service.enabled:
+        try:
+            _upserted = await patient_store.upsert_patient(
+                name=str(best_pi["name"]),
+                age=int(best_pi["age"]) if best_pi.get("age") is not None else None,
+                gender=str(best_pi.get("gender") or ""),
+                doctor_user_id=request.actor_id if actor_role == "doctor" else None,
+                patient_user_id=request.actor_id if actor_role == "patient" else None,
+                chat_id=chat_id,
+                existing_patient_id=_existing_mongo_patient_id,
+            )
+            _mongo_patient_id: str = _upserted["patient_id"]
+            _existing_mongo_patient_id = _mongo_patient_id
+            new_pipeline["mongo_patient_id"] = _mongo_patient_id
+            best_pi["patient_id"] = _mongo_patient_id
+            new_pipeline["patient_info"] = best_pi
+            logger.info("chat_id={} patient upserted patient_id={}", chat_id, _mongo_patient_id)
+
+            # If analysis was done this turn, attach it to the patient record
+            _diag = result.get("diagnosis")
+            _tria = result.get("triage_result")
+            if _diag and _tria:
+                try:
+                    await patient_store.add_analysis(
+                        _mongo_patient_id,
+                        {
+                            "body_part": result.get("body_part"),
+                            "diagnosis": _diag,
+                            "triage": _tria,
+                            "detections": result.get("detections"),
+                        },
+                    )
+                except Exception as _ae:
+                    logger.warning("chat_id={} failed to add analysis to patient: {}", chat_id, _ae)
+        except Exception as _pe:
+            logger.warning("chat_id={} patient upsert failed: {}", chat_id, _pe)
+
     if new_pipeline:
         try:
             await chat_store.save_pipeline_state(chat_id, new_pipeline)
@@ -482,6 +674,32 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
 
     # Report URL comes exclusively from the agent graph.
     report_url = result.get("report_url") if isinstance(result.get("report_url"), str) else None
+
+    # ── Save report to MongoDB when PDF was generated ─────────────────────────
+    if report_url and mongo_service.enabled:
+        try:
+            _rpt_patient_id = str(
+                best_pi.get("patient_id")
+                or new_pipeline.get("mongo_patient_id")
+                or _existing_mongo_patient_id
+                or session.get("patient_id")
+                or request.actor_id
+            )
+            _rpt_name = str(best_pi.get("name") or "Unknown")
+            _rpt_severity = str((result.get("triage_result") or {}).get("level") or "GREEN")
+            _rpt_body = str(result.get("body_part") or "").capitalize()
+            _rpt_title = f"{_rpt_body} X-ray Analysis Report".strip() if _rpt_body else "Orthopedic Analysis Report"
+            await patient_store.save_report(
+                patient_id=_rpt_patient_id,
+                patient_name=_rpt_name,
+                pdf_url=report_url,
+                title=_rpt_title,
+                severity=_rpt_severity,
+                doctor_user_id=request.actor_id if actor_role == "doctor" else None,
+            )
+            logger.info("chat_id={} report saved to MongoDB patient_id={}", chat_id, _rpt_patient_id)
+        except Exception as _re:
+            logger.warning("chat_id={} report MongoDB save failed: {}", chat_id, _re)
 
     if report_url and report_url not in final_response:
         final_response = f"{final_response}\n\nReport: {report_url}"

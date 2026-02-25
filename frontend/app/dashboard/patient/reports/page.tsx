@@ -1,7 +1,9 @@
 import { getPatientReports } from "@/lib/data/loaders";
+import { auth } from "@clerk/nextjs/server";
 
 export default async function PatientReportsPage() {
-  const reports = await getPatientReports();
+  const { userId } = await auth();
+  const reports = await getPatientReports(userId ?? undefined);
 
   return (
     <main className="space-y-4 p-6">
