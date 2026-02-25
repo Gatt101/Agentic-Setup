@@ -8,10 +8,19 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    # Environment: "dev" or "production"
+    app_env: str = "dev"
+
     # Server
     host: str = "0.0.0.0"
     port: int = 8000
     debug: bool = False
+
+    # Base URL of this backend (auto-derived from app_env when not set)
+    server_base_url: str = ""
+
+    # Frontend URL (used for CORS in production)
+    frontend_url: str = "http://localhost:3000"
 
     # OpenAI
     openai_api_key: str = ""
@@ -88,8 +97,30 @@ class Settings(BaseSettings):
         return leg_model.resolve()
 
     @property
+    def is_production(self) -> bool:
+        return self.app_env.lower() in ("production", "prod")
+
+    @property
+    def resolved_server_base_url(self) -> str:
+        """Return the backend base URL. Uses explicit server_base_url if set,
+        otherwise derives it from app_env."""
+        if self.server_base_url:
+            return self.server_base_url.rstrip("/")
+        if self.is_production:
+            return f"https://{self.host}:{self.port}"
+        return f"http://localhost:{self.port}"
+
+    @property
     def cors_origins(self) -> list[str]:
+        """Build the list of allowed CORS origins.
+        In dev mode defaults to ["*"]. In production, restricts to
+        the explicit frontend_url plus any extra origins from
+        cors_allow_origins."""
         origins = [value.strip() for value in self.cors_allow_origins.split(",") if value.strip()]
+        # Always include the configured frontend URL
+        fe = self.frontend_url.rstrip("/")
+        if fe and fe not in origins:
+            origins.append(fe)
         return origins or ["*"]
 
 
