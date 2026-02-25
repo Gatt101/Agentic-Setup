@@ -52,18 +52,18 @@ def validate_clinician_report_inputs(
     diagnosis: dict,
     metadata: dict,
 ) -> None:
-    missing = []
+    # Empty detections is a soft warning — the PDF handles it gracefully.
     if not detections:
-        missing.append("YOLO detections (vision analysis must run first)")
+        logger.warning("Clinician PDF: no detections — report will omit detection table.")
+
+    hard_missing = []
     if not diagnosis or not (diagnosis.get("finding") or diagnosis.get("primary_diagnosis")):
-        missing.append("clinical diagnosis")
+        hard_missing.append("clinical diagnosis")
     if not triage or not (triage.get("level") or triage.get("triage_level")):
-        missing.append("triage assessment")
-    if not metadata or not (metadata.get("patient_id") or metadata.get("doctor_name")):
-        missing.append("case metadata (patient_id or doctor_name)")
-    if missing:
+        hard_missing.append("triage assessment")
+    if hard_missing:
         raise ValueError(
-            f"Cannot generate clinical report — missing: {', '.join(missing)}. "
+            f"Cannot generate clinical report — missing: {', '.join(hard_missing)}. "
             "Complete the full diagnostic pipeline first."
         )
 

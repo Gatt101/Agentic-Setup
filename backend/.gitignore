@@ -40,7 +40,7 @@ htmlcov/
 # Runtime/generated data
 storage/
 images/
-models/
+
 
 # Logs
 *.log

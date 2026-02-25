@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from loguru import logger
 
 from api.middleware import setup_middleware
 from api.router import api_router
@@ -22,8 +23,10 @@ def create_app() -> FastAPI:
 
     @app.on_event("startup")
     async def startup_event() -> None:
+        logger.info("OrthoAssist backend starting up...")
         await storage_service.initialize()
         await mongo_service.initialize()
+        logger.info("OrthoAssist startup complete. Storage and MongoDB ready.")
 
     @app.on_event("shutdown")
     async def shutdown_event() -> None:
