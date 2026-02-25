@@ -15,6 +15,13 @@ import { MessageCircleIcon } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo } from "react";
 
+import {
+  Reasoning,
+  ReasoningContent,
+  ReasoningTrigger,
+} from "@/components/ai-elements/reasoning";
+import type { AgentTraceStep } from "@/hooks/useChat";
+
 import { ChatInput } from "./ChatInput";
 import { MessageBubble } from "./MessageBubble";
 
@@ -132,6 +139,21 @@ async function pickAttachmentPayload(
   };
 }
 
+function formatTraceForReasoning(step: AgentTraceStep): string {
+  if (step.type === "supervisor_decision") {
+    const agent = step.active_agent || "agent";
+    const calls =
+      Array.isArray(step.tool_calls) && step.tool_calls.length > 0
+        ? step.tool_calls.join(", ")
+        : "planning";
+    return `**${agent}** → ${calls}`;
+  }
+  if (step.type === "tool_execution") {
+    return `Running **${step.tool_name || "tool"}**`;
+  }
+  return JSON.stringify(step);
+}
+
 export function ChatWindow({ actorId, mode, patientId }: ChatWindowProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -195,11 +217,23 @@ export function ChatWindow({ actorId, mode, patientId }: ChatWindowProps) {
               ))
             )}
             {isLoading ? (
-              <MessageBubble
-                content="Working on your request..."
-                role="assistant"
-                trace={liveTrace}
-              />
+              <div className="flex items-start gap-3">
+                <div className="max-w-[72ch] rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-sm dark:border-slate-700 dark:bg-slate-900/80">
+                  <Reasoning isStreaming={isLoading}>
+                    <ReasoningTrigger />
+                    <ReasoningContent>
+                      {liveTrace.length > 0
+                        ? liveTrace
+                            .map(
+                              (step: AgentTraceStep, i: number) =>
+                                `${i + 1}. ${formatTraceForReasoning(step)}`
+                            )
+                            .join("\n")
+                        : "Analyzing your request..."}
+                    </ReasoningContent>
+                  </Reasoning>
+                </div>
+              </div>
             ) : null}
             {error ? (
               <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900/60 dark:bg-red-950/30 dark:text-red-300">
