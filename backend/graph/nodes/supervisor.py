@@ -6,38 +6,79 @@ from loguru import logger
 from graph.state import AgentState
 from services.groq_llm import get_supervisor_llm
 from services.chat_store import chat_store
+from services.agent_learning import adaptive_supervisor
+from services.probabilistic_reasoning import (
+    confidence_estimator,
+    probabilistic_reasoner,
+    bayesian_updater
+)
 from tools import ALL_TOOLS
 
-SUPERVISOR_PROMPT = """You are an orthopedic AI clinical assistant.
-You must reason step-by-step and use tools when required.
+SUPERVISOR_PROMPT = """You are an autonomous orthopedic AI clinical assistant with enhanced decision-making capabilities.
 
-PIPELINE RULES:
-1. If an image is provided, first call vision_detect_body_part.
-2. After body part detection, choose vision_detect_hand_fracture or vision_detect_leg_fracture.
-3. If detection confidence is low, request better image quality.
-4. clinical_generate_diagnosis requires detections.
-5. clinical_assess_triage requires diagnosis.
-6. If triage is RED or AMBER, hospital_find_nearby_hospitals is required.
-7. For text-only questions, use knowledge_* tools.
-8. Generate report PDFs ONLY when user explicitly asks for report/document/PDF.
-9. Never call the same tool repeatedly with identical context.
-10. Keep final clinical response concise and medically safe.
-11. CRITICAL: Do NOT ask the user for information obtainable from tools.
-12. CRITICAL: NEVER ask for patient name/age/gender UNLESS the user has explicitly asked for a report or PDF IN THEIR CURRENT MESSAGE. Analysis requests do NOT need patient info.
-13. CRITICAL: When the vision+clinical pipeline is complete (diagnosis and triage both present) and the user has NOT asked for a report, respond with a clear summary of the findings. Do NOT ask for any extra information.
+CORE PRINCIPLES:
+1. You are responsible for tool selection and decision-making - choose tools based on clinical reasoning.
+2. Use your judgment to determine the optimal sequence of actions.
+3. Consider clinical context, patient safety, and information completeness before acting.
+4. Learn from pipeline state to make informed decisions about next steps.
 
-=== REPORT GATE (ONLY applies when user explicitly says \"report\", \"PDF\", or \"document\") ===
-If PIPELINE STATUS shows \"Report patient info needed\" AND the user demanded a report THIS turn:
-  Ask in ONE message: \"Before I generate your report, I need a few details:\n- Full name\n- Age\n- Gender\nPlease share these.\"
-  Do NOT call any report tool until all of name, age, and gender are confirmed.
+CLINICAL WORKFLOW GUIDANCE:
+1. Image Analysis: When X-ray images are provided, systematically analyze using vision tools.
+2. Diagnosis: Formulate diagnoses based on detection findings and clinical reasoning.
+3. Triage Assessment: Evaluate urgency and recommend appropriate care timelines.
+4. Knowledge Integration: Use clinical knowledge tools to support decision-making when needed.
+5. Hospital Coordination: For urgent cases (RED/AMBER triage), consider hospital resources.
 
-=== REPORT ROUTING ===
-  actor_role = patient \u2192 report_generate_patient_pdf
-  actor_role = doctor \u2192 report_generate_clinician_simple_pdf
-  Always inject doctor_name from actor_name into metadata when actor_role is doctor.
+AUTONOMOUS DECISION-MAKING:
+- You have full autonomy to choose tools based on clinical context.
+- Evaluate confidence levels from vision analysis before proceeding.
+- Determine when additional information is needed vs. when current data is sufficient.
+- Adjust your approach based on pipeline state and previous tool outcomes.
+
+SAFETY AND COMPLIANCE:
+- Always prioritize patient safety and clinical accuracy.
+- Include appropriate disclaimers for AI-generated medical content.
+- Never provide definitive treatment recommendations without clinical review.
+- Request patient information (name/age/gender) ONLY when generating formal reports.
+
+REPORT GENERATION (requires explicit user request):
+- Only generate PDF reports when user explicitly asks for "report", "PDF", or "document"
+- Ensure patient information is complete before report generation
+- Match report type to user role (patient vs. clinician)
 """
 
 NON_VISION_TOOLS = [tool for tool in ALL_TOOLS if not tool.name.startswith("vision_")]
+
+
+def _build_learning_context(state: AgentState) -> str:
+    """Build context from experience-based learning patterns."""
+    try:
+        current_state_dict = {
+            "body_part": state.get("body_part"),
+            "diagnosis_present": bool(state.get("diagnosis")),
+            "triage_present": bool(state.get("triage_result")),
+            "session_context": {
+                "actor_role": state.get("actor_role"),
+                "actor_name": state.get("actor_name")
+            }
+        }
+
+        applicable_patterns = adaptive_supervisor.find_applicable_patterns(current_state_dict)
+
+        if not applicable_patterns:
+            return "No relevant learning patterns found for current state."
+
+        context_lines = ["=== LEARNING INSIGHTS FROM EXPERIENCE ==="]
+        for i, pattern in enumerate(applicable_patterns[:3], 1):  # Top 3 patterns
+            context_lines.append(f"{i}. [{pattern['pattern_type'].upper()}] {pattern['recommendation']}")
+            context_lines.append(f"   Confidence: {pattern['confidence']:.2f}")
+
+        context_lines.append("Consider these patterns in your decision-making process.\n")
+        return "\n".join(context_lines)
+
+    except Exception as e:
+        logger.warning("Failed to build learning context: {}", e)
+        return "Learning insights temporarily unavailable."
 
 
 def _build_pipeline_context(state: AgentState) -> str:
@@ -157,55 +198,178 @@ def _report_requested(state: AgentState) -> bool:
     return False
 
 
-def _forced_tool_call(state: AgentState) -> dict | None:
+def _autonomous_safety_gate(state: AgentState, llm_decision: dict | None) -> dict | None:
+    """Enhanced safety validation for autonomous agent decisions."""
+    if not llm_decision:
+        return None
+
+    tool_name = llm_decision.get("name", "")
+
+    # Safety checks for clinical tools
+    if tool_name == "clinical_generate_diagnosis":
+        detections = state.get("detections")
+        if not detections or not isinstance(detections, list) or len(detections) == 0:
+            logger.warning("Autonomy safety gate: clinical_generate_diagnosis blocked - no detections")
+            return None
+
+    if tool_name == "clinical_assess_triage":
+        diagnosis = state.get("diagnosis")
+        if not diagnosis or not isinstance(diagnosis, dict):
+            logger.warning("Autonomy safety gate: clinical_assess_triage blocked - no diagnosis")
+            return None
+
+    # Enhanced report safety gate
+    if tool_name.startswith("report_generate_"):
+        report_this_turn = _report_requested(state)
+        if not report_this_turn:
+            logger.warning("Autonomy safety gate: report tool blocked - not requested this turn")
+            return None
+
+        # Check patient info completeness
+        if not _patient_info_complete(state):
+            logger.warning("Autonomy safety gate: report tool blocked - incomplete patient info")
+            return None
+
+        # Prevent infinite retry of report tools
+        report_tools_attempted = [
+            t for t in state.get("tool_calls_made", [])
+            if t.startswith("report_generate_")
+        ]
+        if report_tools_attempted:
+            logger.warning("Autonomy safety gate: report tool blocked - already attempted")
+            return None
+
+    return llm_decision
+
+
+def _enhanced_context_aware_suggestion(state: AgentState) -> dict | None:
+    """Provide context-aware suggestions with probabilistic reasoning."""
     body_part = state.get("body_part")
     detections = state.get("detections")
     diagnosis = state.get("diagnosis")
     triage = state.get("triage_result")
-    report_url = state.get("report_url")
+
+    # Only provide guidance when clinically appropriate, not forced
+    candidates = []
 
     if not body_part and state.get("image_data"):
-        return {"name": "vision_detect_body_part", "args": {}}
+        # Use probabilistic reasoning to estimate confidence
+        confidence = confidence_estimator.estimate_tool_confidence(
+            "vision_detect_body_part",
+            {"image_data": state.get("image_data")}
+        )
+        candidates.append({
+            "reasoning": "No body part detected yet",
+            "suggested_action": "vision_detect_body_part",
+            "confidence": confidence,
+            "uncertainty_level": "high" if confidence < 0.8 else "moderate"
+        })
 
-    if body_part in {"hand", "leg"} and detections is None:
-        name = "vision_detect_hand_fracture" if body_part == "hand" else "vision_detect_leg_fracture"
-        return {"name": name, "args": {}}
+    if body_part and not detections:
+        if body_part == "hand":
+            confidence = confidence_estimator.estimate_tool_confidence(
+                "vision_detect_hand_fracture",
+                {"body_part": "hand", "image_data": state.get("image_data")}
+            )
+            candidates.append({
+                "reasoning": "Hand detected, fracture analysis needed",
+                "suggested_action": "vision_detect_hand_fracture",
+                "confidence": confidence,
+                "uncertainty_level": "high" if confidence < 0.8 else "moderate"
+            })
+        elif body_part == "leg":
+            confidence = confidence_estimator.estimate_tool_confidence(
+                "vision_detect_leg_fracture",
+                {"body_part": "leg", "image_data": state.get("image_data")}
+            )
+            candidates.append({
+                "reasoning": "Leg detected, fracture analysis needed",
+                "suggested_action": "vision_detect_leg_fracture",
+                "confidence": confidence,
+                "uncertainty_level": "high" if confidence < 0.8 else "moderate"
+            })
 
-    if detections is not None and not diagnosis:
-        return {"name": "clinical_generate_diagnosis", "args": {}}
+    if detections and not diagnosis:
+        confidence = confidence_estimator.estimate_tool_confidence(
+            "clinical_generate_diagnosis",
+            {"detections": detections}
+        )
+        candidates.append({
+            "reasoning": "Detections available, clinical diagnosis needed",
+            "suggested_action": "clinical_generate_diagnosis",
+            "confidence": confidence,
+            "uncertainty_level": "high" if confidence < 0.7 else "moderate"
+        })
 
     if diagnosis and not triage:
-        return {"name": "clinical_assess_triage", "args": {}}
+        confidence = confidence_estimator.estimate_tool_confidence(
+            "clinical_assess_triage",
+            {"diagnosis": diagnosis}
+        )
+        candidates.append({
+            "reasoning": "Diagnosis available, triage assessment needed",
+            "suggested_action": "clinical_assess_triage",
+            "confidence": confidence,
+            "uncertainty_level": "high" if confidence < 0.7 else "moderate"
+        })
+
+    # Use probabilistic selection instead of just taking highest confidence
+    if candidates:
+        selected_candidate = probabilistic_reasoner.select_action_with_probability(
+            candidates,
+            state
+        )
+
+        if selected_candidate and selected_candidate.get("confidence", 0) > 0.6:
+            logger.info(
+                "Probabilistically selected action: {} with confidence {:.3f}",
+                selected_candidate["suggested_action"],
+                selected_candidate["confidence"]
+            )
+            return {"name": selected_candidate["suggested_action"], "args": {}}
+
+    return None
+
+
+def _autonomous_decision_logic(state: AgentState) -> dict | None:
+    """Enhanced decision-making with autonomy while maintaining safety."""
+    # First try autonomous suggestions
+    suggestion = _enhanced_context_aware_suggestion(state)
+    if suggestion:
+        # Pass through safety gate
+        validated = _autonomous_safety_gate(state, suggestion)
+        if validated:
+            return validated
+
+    # Handle report generation with enhanced autonomy but safety
+    diagnosis = state.get("diagnosis")
+    triage = state.get("triage_result")
+    report_url = state.get("report_url")
 
     if diagnosis and triage and not report_url:
-        # Report should run ONLY when explicitly requested in the current turn.
         report_this_turn = _report_requested(state)
-
         if report_this_turn:
             actor_role = str(state.get("actor_role") or "patient").lower()
 
-            # Guard: don't retry a report tool that already ran (prevents infinite loops)
-            report_tools_attempted = [
-                t for t in state.get("tool_calls_made", [])
-                if t in {"report_generate_patient_pdf", "report_generate_clinician_pdf", "report_generate_clinician_simple_pdf"}
-            ]
-            if report_tools_attempted:
-                return None  # already attempted, let graph route to response_builder
-
-            # Gate 1: patient info must be complete
-            if not _patient_info_complete(state):
-                return None  # supervisor LLM will ask for missing fields
-
-            # Gate 2 (doctor): must have chosen report type
+            # Apply safety gate
             if actor_role == "doctor":
                 tool_name = _doctor_report_type_clear(state)
-                if not tool_name:
-                    return None  # supervisor LLM will ask for type choice
-                return {"name": tool_name, "args": {}}
-
-            return {"name": "report_generate_patient_pdf", "args": {}}
+                if tool_name:
+                    validated = _autonomous_safety_gate(state, {"name": tool_name, "args": {}})
+                    if validated:
+                        return validated
+            else:
+                validated = _autonomous_safety_gate(state, {"name": "report_generate_patient_pdf", "args": {}})
+                if validated:
+                    return validated
 
     return None
+
+
+# Keep original function name for backward compatibility
+def _forced_tool_call(state: AgentState) -> dict | None:
+    """Enhanced autonomous decision-making with safety validation."""
+    return _autonomous_decision_logic(state)
 
 
 async def supervisor_node(state: AgentState) -> dict:
@@ -253,8 +417,9 @@ async def supervisor_node(state: AgentState) -> dict:
         )
     )
 
+    learning_context = SystemMessage(content=_build_learning_context(state))
     pipeline_context = SystemMessage(content="PIPELINE STATUS:\n" + _build_pipeline_context(state))
-    prompt_messages = [SystemMessage(content=SUPERVISOR_PROMPT), safety_context, image_context, pipeline_context, *messages]
+    prompt_messages = [SystemMessage(content=SUPERVISOR_PROMPT), learning_context, safety_context, image_context, pipeline_context, *messages]
 
     forced_call = _forced_tool_call(state)
     if forced_call:

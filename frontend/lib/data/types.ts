@@ -42,6 +42,7 @@ export type ReportRecord = {
   createdAt: string;
   id: string;
   patientName: string;
+  pdfUrl?: string;
   severity: "AMBER" | "GREEN" | "RED";
   status: "draft" | "finalized" | "reviewing";
   title: string;

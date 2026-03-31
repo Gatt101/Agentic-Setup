@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /c/Users/GAURAV/OneDrive/Desktop/Projects/OrthoAssist -maxdepth 3 -type d ! -path */.venv/* ! -path */node_modules/* ! -path */.git/*)",
+      "Bash(git log:*)",
+      "Bash(xargs grep:*)"
+    ]
+  }
+}

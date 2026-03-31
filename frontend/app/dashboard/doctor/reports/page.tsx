@@ -33,6 +33,7 @@ export default async function DoctorReportsPage() {
               <th className="px-4 py-3 font-semibold">Status</th>
               <th className="px-4 py-3 font-semibold">Severity</th>
               <th className="px-4 py-3 font-semibold">Created</th>
+              <th className="px-4 py-3 font-semibold">PDF</th>
             </tr>
           </thead>
           <tbody>
@@ -64,6 +65,19 @@ export default async function DoctorReportsPage() {
                 </td>
                 <td className="px-4 py-3 text-slate-600 dark:text-slate-300">
                   {new Date(report.createdAt).toLocaleString()}
+                </td>
+                <td className="px-4 py-3">
+                  {report.pdfUrl ? (
+                    <a
+                      className="rounded-md bg-blue-600 px-3 py-1 text-xs font-semibold text-white hover:bg-blue-700"
+                      download
+                      href={`${process.env.NEXT_PUBLIC_API_BASE_URL?.replace("/api", "") ?? "http://localhost:8000"}${report.pdfUrl}`}
+                    >
+                      Download
+                    </a>
+                  ) : (
+                    <span className="text-xs text-slate-400">—</span>
+                  )}
                 </td>
               </tr>
             ))}

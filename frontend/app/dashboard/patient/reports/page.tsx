@@ -35,6 +35,15 @@ export default async function PatientReportsPage() {
             <p className="text-sm text-slate-700 dark:text-slate-300">
               Severity: <span className="font-medium">{report.severity}</span>
             </p>
+            {report.pdfUrl && (
+              <a
+                className="mt-3 inline-block rounded-md bg-blue-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-blue-700"
+                download
+                href={`${process.env.NEXT_PUBLIC_API_BASE_URL?.replace("/api", "") ?? "http://localhost:8000"}${report.pdfUrl}`}
+              >
+                Download PDF
+              </a>
+            )}
           </article>
         ))}
       </div>
