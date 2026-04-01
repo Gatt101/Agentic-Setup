@@ -120,7 +120,7 @@ def _build_pipeline_context(state: AgentState) -> str:
     pi = state.get("patient_info") or {}
     missing_fields = _missing_patient_fields(state)
     report_stage = _report_requested(state)
-    if missing_fields and report_stage:
+    if missing_fields and report_stage and actor_role != "doctor":
         lines.append(f"Report patient info needed: {', '.join(missing_fields)}")
     elif missing_fields:
         lines.append("Patient info: pending")
@@ -140,6 +140,9 @@ def _build_pipeline_context(state: AgentState) -> str:
 
 def _patient_info_complete(state: AgentState) -> bool:
     """Return True if patient name, age, and gender are all present."""
+    actor_role = str(state.get("actor_role") or "patient").lower()
+    if actor_role == "doctor":
+        return True
     return len(_missing_patient_fields(state)) == 0
 
 
@@ -242,6 +245,28 @@ def _autonomous_safety_gate(state: AgentState, llm_decision: dict | None) -> dic
     return llm_decision
 
 
+def _multi_agent_recommendation(state: AgentState) -> dict | None:
+    insights = state.get("multi_agent_insights") or {}
+    recommendation = insights.get("consensus_recommendation")
+    if not isinstance(recommendation, dict):
+        return None
+
+    tool_name = str(recommendation.get("tool") or "").strip()
+    confidence = float(recommendation.get("confidence") or 0.0)
+
+    if not tool_name or confidence < settings.multi_agent_confidence_threshold:
+        return None
+
+    validated = _autonomous_safety_gate(state, {"name": tool_name, "args": {}})
+    if validated:
+        logger.info(
+            "Applying multi-agent recommendation: tool={} confidence={:.2f}",
+            tool_name,
+            confidence,
+        )
+    return validated
+
+
 def _enhanced_context_aware_suggestion(state: AgentState) -> dict | None:
     """Provide context-aware suggestions with probabilistic reasoning."""
     body_part = state.get("body_part")
@@ -333,6 +358,10 @@ def _enhanced_context_aware_suggestion(state: AgentState) -> dict | None:
 
 def _autonomous_decision_logic(state: AgentState) -> dict | None:
     """Enhanced decision-making with autonomy while maintaining safety."""
+    consensus_recommendation = _multi_agent_recommendation(state)
+    if consensus_recommendation:
+        return consensus_recommendation
+
     # First try autonomous suggestions
     suggestion = _enhanced_context_aware_suggestion(state)
     if suggestion:
@@ -418,8 +447,78 @@ async def supervisor_node(state: AgentState) -> dict:
     )
 
     learning_context = SystemMessage(content=_build_learning_context(state))
+
+    # MULTI-AGENT INTEGRATION: Add multi-agent insights when available
+    multi_agent_context = ""
+    multi_agent_insights = state.get("multi_agent_insights", {})
+
+    if multi_agent_insights:
+        from core.config import settings
+
+        # Build context from multi-agent system
+        context_parts = []
+
+        # 1. Consensus recommendations
+        if multi_agent_insights.get("consensus_recommendation"):
+            consensus = multi_agent_insights["consensus_recommendation"]
+            if consensus.get("confidence", 0) >= settings.multi_agent_confidence_threshold:
+                context_parts.append(
+                    f"=== MULTI-AGENT CONSENSUS ===\n"
+                    f"Agents: {', '.join(consensus.get('participants', []))}\n"
+                    f"Recommended Tool: {consensus.get('tool', 'N/A')}\n"
+                    f"Confidence: {consensus.get('confidence', 0):.2f}\n"
+                    f"Reasoning: {consensus.get('reasoning', '')}\n"
+                )
+                logger.info(
+                    "Using multi-agent consensus recommendation: {} (confidence: {:.2f})",
+                    consensus.get("tool", "unknown"), consensus.get("confidence", 0)
+                )
+
+        # 2. Agent perceptions
+        if multi_agent_insights.get("agent_perceptions"):
+            context_parts.append("=== SPECIALIST AGENT PERCEPTIONS ===\n")
+            for agent_name, perceptions in multi_agent_insights["agent_perceptions"].items():
+                context_parts.append(
+                    f"{agent_name.upper()}: {len(perceptions.get('detections', []))} detections, "
+                    f"quality={perceptions.get('image_quality', {}).get('overall_quality', 'unknown')}"
+                )
+
+        # 3. Collaborative opportunities
+        if multi_agent_insights.get("collaborative_opportunities"):
+            context_parts.append("=== COLLABORATIVE OPPORTUNITIES ===\n")
+            for opportunity in multi_agent_insights["collaborative_opportunities"]:
+                context_parts.append(
+                    f"Type: {opportunity.get('type', 'unknown')}, "
+                    f"Participants: {', '.join(opportunity.get('participants', []))}, "
+                    f"Priority: {opportunity.get('priority', 2)}"
+                )
+
+        # 4. Recommended actions from specialized agents
+        if multi_agent_insights.get("clinical_agent_actions"):
+            context_parts.append("=== CLINICAL AGENT RECOMMENDATIONS ===\n")
+            for action in multi_agent_insights["clinical_agent_actions"]:
+                context_parts.append(
+                    f"- {action.get('action_type', 'unknown')}: {action.get('description', '')} "
+                    f"(confidence: {action.get('confidence', 0):.2f})"
+                )
+
+        if multi_agent_insights.get("vision_agent_actions"):
+            context_parts.append("=== VISION AGENT RECOMMENDATIONS ===\n")
+            for action in multi_agent_insights["vision_agent_actions"]:
+                context_parts.append(
+                    f"- {action.get('action_type', 'unknown')}: {action.get('description', '')} "
+                    f"(confidence: {action.get('confidence', 0):.2f})"
+                )
+
+        multi_agent_context = "\n".join(context_parts) + "\n"
+        logger.info("session={} Multi-agent insights integrated", session_id)
+
     pipeline_context = SystemMessage(content="PIPELINE STATUS:\n" + _build_pipeline_context(state))
     prompt_messages = [SystemMessage(content=SUPERVISOR_PROMPT), learning_context, safety_context, image_context, pipeline_context, *messages]
+
+    # Add multi-agent context if available
+    if multi_agent_context:
+        prompt_messages.insert(2, SystemMessage(content=multi_agent_context))
 
     forced_call = _forced_tool_call(state)
     if forced_call:
@@ -520,10 +619,7 @@ async def supervisor_node(state: AgentState) -> dict:
                 )
             elif missing_fields and actor_role == "doctor":
                 response = AIMessage(
-                    content=(
-                        f"Before generating the report, please provide the patient\u2019s "
-                        f"**{', '.join(missing_fields)}** so the report is complete."
-                    )
+                    content="Generating the clinician summary PDF using the completed analysis."
                 )
             # (Full clinical report option removed — doctor always gets summary report)
         # Pending auto-trigger is disabled: report generation must be explicit per-turn.

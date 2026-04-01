@@ -97,14 +97,45 @@ async def response_builder_node(state: AgentState) -> dict:
     tool_calls_made = [str(name) for name in (state.get("tool_calls_made") or [])]
     report_generated_this_turn = bool(report_url) and any(name in _REPORT_TOOLS for name in tool_calls_made)
     analysis_generated_this_turn = any(name in _ANALYSIS_TOOLS for name in tool_calls_made)
+    report_requested = _report_requested(state)
+    patient_info = state.get("patient_info") or {}
+    patient_info_complete = (
+        bool(str(patient_info.get("name") or "").strip())
+        and patient_info.get("age") is not None
+        and bool(str(patient_info.get("gender") or "").strip())
+    )
 
     # If report generation happened using prior analysis, don't repeat analysis blocks.
     if report_generated_this_turn and not analysis_generated_this_turn:
         return {"final_response": "Your PDF report is ready. Use the download button below."}
 
     # If report already exists and user asks for it again, keep response concise.
-    if report_url and _report_requested(state) and not analysis_generated_this_turn:
+    if report_url and report_requested and not analysis_generated_this_turn:
         return {"final_response": "Your report is already available. Use the download button below."}
+
+    if report_requested and not (diagnosis and triage):
+        if not state.get("image_data"):
+            return {
+                "final_response": (
+                    "I cannot generate the PDF yet. I have "
+                    + ("your patient details, " if patient_info_complete else "partial patient details, ")
+                    + "but I still need an X-ray analysis first. Upload the X-ray or ask me to analyze it, then ask for the report."
+                )
+            }
+        if not diagnosis:
+            return {
+                "final_response": (
+                    "I cannot generate the PDF yet because the clinical analysis is not complete. "
+                    "I need to finish image analysis and diagnosis first."
+                )
+            }
+        if not triage:
+            return {
+                "final_response": (
+                    "I cannot generate the PDF yet because triage is still incomplete. "
+                    "I need to finish the full analysis before creating the report."
+                )
+            }
 
     # If the full clinical pipeline ran, build a proper structured summary.
     # Do this BEFORE checking _last_non_tool_ai_message so a stale LLM message

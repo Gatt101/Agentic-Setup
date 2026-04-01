@@ -20,6 +20,12 @@ class MongoService:
             raise RuntimeError("MongoDB is not initialized. Set MONGODB_URI and restart the server.")
         return self._db
 
+    def get_collection(self, collection_name: str):
+        """Get a MongoDB collection by name."""
+        if self._db is None:
+            raise RuntimeError("MongoDB is not initialized. Set MONGODB_URI and restart the server.")
+        return self._db[collection_name]
+
     async def initialize(self) -> None:
         if not self.enabled:
             return
@@ -43,6 +49,11 @@ class MongoService:
 
         await db.chat_traces.create_index([("chat_id", 1)])
         await db.chat_traces.create_index([("chat_id", 1), ("created_at", -1)])
+        await db.agent_feedback.create_index([("feedback_id", 1)], unique=True)
+        await db.agent_feedback.create_index([("session_id", 1), ("timestamp", -1)])
+        await db.feedback_patterns.create_index([("feedback_id", 1)])
+        await db.agent_patterns.create_index([("pattern_id", 1)], unique=True)
+        await db.tool_beliefs.create_index([("tool_name", 1)], unique=True)
 
         await db.doctor_patient_assignments.create_index(
             [("doctor_id", 1), ("patient_id", 1)],

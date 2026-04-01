@@ -7,7 +7,6 @@ from fastapi import APIRouter, HTTPException
 from api.schemas.requests import AnalyzeRequest
 from api.schemas.responses import AgentResponse
 from core.exceptions import AgentExecutionError
-from graph.graph import run_agent
 from tools.vision.annotator import annotate_xray_image_impl
 
 
@@ -27,6 +26,8 @@ async def _build_annotated_image(image_data: str | None, detections: object) -> 
 
 @router.post("/analyze", response_model=AgentResponse)
 async def analyze_xray(request: AnalyzeRequest) -> AgentResponse:
+    from graph.graph import run_agent
+
     session_id = request.session_id or str(uuid4())
     user_message = request.user_message or request.symptoms or "Analyze this X-ray."
 

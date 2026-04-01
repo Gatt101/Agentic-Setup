@@ -3,7 +3,25 @@
     "allow": [
       "Bash(find /c/Users/GAURAV/OneDrive/Desktop/Projects/OrthoAssist -maxdepth 3 -type d ! -path */.venv/* ! -path */node_modules/* ! -path */.git/*)",
       "Bash(git log:*)",
-      "Bash(xargs grep:*)"
+      "Bash(xargs grep:*)",
+      "Bash(python -c \"from graph.nodes import supervisor; print\\(''Import successful''\\)\")",
+      "Bash(pip install:*)",
+      "Bash(python -c \"from graph.nodes import supervisor; print\\(''Basic import successful''\\)\")",
+      "Bash(python main.py)",
+      "Bash(curl -s http://localhost:8000/health)",
+      "Bash(python -c \":*)",
+      "Bash(python -m py_compile api/endpoints/feedback.py)",
+      "Bash(python test_imports.py)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(''api/endpoints/feedback.py''\\).read\\(\\)\\); print\\(''✅ feedback.py syntax valid''\\)\")",
+      "Bash(dir apiendpointsfeedback.py)",
+      "Bash(python -c \"with open\\(''api/endpoints/feedback.py'', ''rb''\\) as f: lines = f.readlines\\(\\); print\\(''Line 21:'', repr\\(lines[20]\\)\\); print\\(''Line 22:'', repr\\(lines[21]\\)\\)\")",
+      "Bash(python -c \"with open\\(''api/endpoints/feedback.py'', ''rb''\\) as f: lines = f.readlines\\(\\); print\\(''Lines 18-22:''\\); print\\(\\); [print\\(repr\\(line\\)\\) for line in lines[17:22]]\")",
+      "Bash(python -c \"from api.endpoints.feedback_clean import router; print\\(''Clean version works!''\\)\")",
+      "Bash(mv api/endpoints/feedback.py api/endpoints/feedback.py.backup)",
+      "Bash(mv api/endpoints/feedback_clean.py api/endpoints/feedback.py)",
+      "Bash(python -c \"from main import app; print\\(''✅ Main app import successful''\\)\")",
+      "Bash(python -c \"import sys; sys.path.insert\\(0, ''.''\\); from fastapi import FastAPI; print\\(''FastAPI works!''\\)\")",
+      "Bash(timeout 15 python main_simple.py)"
     ]
   }
 }

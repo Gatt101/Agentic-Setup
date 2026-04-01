@@ -9,6 +9,7 @@ from loguru import logger
 
 from graph.state import AgentState
 from services.chat_store import chat_store
+from services.probabilistic_reasoning import bayesian_updater
 from tools import ALL_TOOLS
 
 
@@ -260,6 +261,9 @@ async def tool_executor_node(state: AgentState, config=None) -> dict:
     session_id = state.get("session_id", "unknown")
     trace_events: list[dict] = []
 
+    # Track tool execution outcomes for learning
+    tool_execution_outcomes = []
+
     for message in result.get("messages", []):
         if not isinstance(message, ToolMessage):
             continue
@@ -286,6 +290,65 @@ async def tool_executor_node(state: AgentState, config=None) -> dict:
         if not payload:
             continue
 
+        # Determine tool execution success for learning
+        execution_success = True
+        execution_error = None
+
+        try:
+            # Check for common error indicators in tool results
+            if isinstance(payload, dict):
+                if payload.get("error"):
+                    execution_success = False
+                    execution_error = payload.get("error")
+                elif payload.get("success") == False:
+                    execution_success = False
+                    execution_error = payload.get("message", "Tool execution failed")
+                # For vision tools, check if detections are valid
+                elif message.name.startswith("vision_"):
+                    detections = payload.get("detections", [])
+                    if not detections or (isinstance(detections, list) and len(detections) == 0):
+                        # Vision tool failed to detect anything
+                        execution_success = False
+                        execution_error = "No detections found"
+                # For clinical tools, check if results are valid
+                elif message.name.startswith("clinical_"):
+                    if not payload or (isinstance(payload, dict) and not payload.get("diagnosis") and not payload.get("triage_result")):
+                        execution_success = False
+                        execution_error = "No valid clinical results"
+
+            # Record execution outcome for learning
+            tool_execution_outcomes.append({
+                "tool_name": message.name,
+                "success": execution_success,
+                "error": execution_error,
+                "payload": payload
+            })
+
+            # Update Bayesian beliefs based on execution outcome
+            try:
+                bayesian_updater.update_belief(message.name, execution_success)
+                logger.info(
+                    "session={} Updated Bayesian belief for {}: success={}, error={}",
+                    session_id, message.name, execution_success, execution_error
+                )
+            except Exception as e:
+                logger.warning(
+                    "session={} Failed to update Bayesian belief for {}: {}",
+                    session_id, message.name, e
+                )
+
+        except Exception as e:
+            logger.error(
+                "session={} Error processing tool execution for {}: {}",
+                session_id, message.name, e
+            )
+            tool_execution_outcomes.append({
+                "tool_name": message.name,
+                "success": False,
+                "error": str(e),
+                "payload": payload
+            })
+
         if message.name == "vision_detect_body_part":
             updates["body_part"] = payload.get("body_part")
         elif message.name in {"vision_detect_hand_fracture", "vision_detect_leg_fracture"}:
@@ -301,5 +364,26 @@ async def tool_executor_node(state: AgentState, config=None) -> dict:
 
     if trace_events:
         updates["agent_trace"] = [*state.get("agent_trace", []), *trace_events]
+
+    # Store tool execution outcomes for learning system
+    if tool_execution_outcomes:
+        updates["tool_execution_outcomes"] = tool_execution_outcomes
+
+        try:
+            await chat_store.append_trace_event(
+                session_id,
+                {
+                    "type": "tool_execution_summary",
+                    "tool_outcomes": tool_execution_outcomes,
+                    "total_tools_executed": len(tool_execution_outcomes),
+                    "successful_executions": sum(1 for o in tool_execution_outcomes if o["success"]),
+                    "failed_executions": sum(1 for o in tool_execution_outcomes if not o["success"])
+                }
+            )
+        except Exception:
+            logger.warning(
+                "session={} Failed to store tool execution outcomes for learning",
+                session_id
+            )
 
     return {**result, **updates}

@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     max_agent_iterations: int = 10
     session_ttl_seconds: int = 3600
 
+    # Multi-Agent System
+    multi_agent_enabled: bool = False
+    multi_agent_confidence_threshold: float = 0.8
+
     # MongoDB
     mongodb_uri: str = ""
     mongodb_db_name: str = "orthoassist"
@@ -74,6 +78,22 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
     )
+
+    @field_validator("debug", mode="before")
+    @classmethod
+    def parse_debug_value(cls, value: object) -> bool:
+        """Accept common deployment strings instead of crashing at import time."""
+        if isinstance(value, bool):
+            return value
+        if value is None:
+            return False
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true", "yes", "on", "debug", "development", "dev"}:
+                return True
+            if normalized in {"0", "false", "no", "off", "release", "production", "prod"}:
+                return False
+        return bool(value)
 
     @property
     def resolved_storage_path(self) -> Path:

@@ -16,10 +16,10 @@ from api.schemas.requests import ChatRequest, ChatSessionCreateRequest, DoctorPa
 from api.schemas.responses import AgentResponse, ChatMessageRecord, ChatSessionCreateResponse, ChatSessionSummary
 from core.config import settings
 from core.exceptions import AgentExecutionError
-from graph.graph import run_agent
 from services.chat_store import chat_store
 from services.mongo import mongo_service
 from services.patient_store import patient_store
+from tools.report.clinician_simple_pdf import generate_clinician_simple_pdf_impl
 from tools.report.patient_pdf import generate_patient_pdf_impl
 from tools.utils import decode_image_base64, strip_data_url
 from tools.vision.annotator import annotate_xray_image_impl
@@ -91,21 +91,33 @@ def _extract_patient_info(history: list[dict], current_message: str, patient_id:
 
     info: dict[str, Any] = {"patient_id": patient_id}
 
-    # Accept: "name: John", "full name: John", "name = John", "name - John"
+    # Accept:
+    # "name: John", "full name: John", "name = John", "name - John",
+    # "my name is John", "patient name is John"
     name_match = re.search(
-        r"\b(?:full\s*name|name)\s*[:=\-]?\s*([A-Za-z][A-Za-z\s\.\'-]{1,60})(?:[,\n]|$)",
+        r"\b(?:(?:my|patient)\s+)?(?:full\s*name|name)\s*(?:(?:[:=\-])|\bis\b)?\s*"
+        r"([A-Za-z][A-Za-z\s\.\'-]{1,60}?)"
+        r"(?=\s*(?:,|\n|age\b|aged\b|ge[nm]de?r?\b|doctor\b|give\b|gen\b|pdf\b|$))",
         merged_text,
         flags=re.IGNORECASE,
     )
-    # Accept: "age: 33", "age = 33", "age 33"
-    age_match = re.search(r"\b(?:age|aged)\s*[:=\-]?\s*(\d{1,3})\b", merged_text, flags=re.IGNORECASE)
-    # Accept: "gender: male", "gender = male", "gender: m", "gemder = male"
+    # Accept: "age: 33", "age = 33", "age 33", "age is 33"
+    age_match = re.search(
+        r"\b(?:age|aged)\s*(?:(?:[:=\-])|\bis\b)?\s*(\d{1,3})\b",
+        merged_text,
+        flags=re.IGNORECASE,
+    )
+    # Accept: "gender: male", "gender = male", "gender: m", "gender is male", "gemder = male"
     gender_match = re.search(
-        r"\bge[nm]de?r?\s*[:=\-]?\s*(male|female|other|non-binary|nonbinary|m|f)\b",
+        r"\bge[nm]de?r?\s*(?:(?:[:=\-])|\bis\b)?\s*(male|female|other|non-binary|nonbinary|m|f)\b",
         merged_text,
         flags=re.IGNORECASE,
     )
-    doctor_match = re.search(r"\bdoctor\s*[:=\-]?\s*([A-Za-z][A-Za-z\s\.]{1,60})", merged_text, flags=re.IGNORECASE)
+    doctor_match = re.search(
+        r"\bdoctor\s*(?:(?:[:=\-])|\bis\b)?\s*([A-Za-z][A-Za-z\s\.]{1,60})",
+        merged_text,
+        flags=re.IGNORECASE,
+    )
 
     if name_match:
         info["name"] = name_match.group(1).strip().rstrip(",")
@@ -138,6 +150,17 @@ def _missing_patient_fields(patient_info: dict[str, Any]) -> list[str]:
             continue
         missing.append(key)
     return missing
+
+
+def _same_patient_value(left: Any, right: Any) -> bool:
+    if left is None and right is None:
+        return True
+    if isinstance(left, int) or isinstance(right, int):
+        try:
+            return int(left) == int(right)
+        except Exception:
+            return False
+    return str(left or "").strip().lower() == str(right or "").strip().lower()
 
 
 def _agent_error_message(detail: str) -> str:
@@ -214,37 +237,70 @@ async def _build_annotated_image(image_data: str | None, detections: object) -> 
     return encoded if isinstance(encoded, str) and encoded else None
 
 
-async def _ensure_patient_report(
+async def _ensure_report(
     report_requested: bool,
+    actor_role: str,
     diagnosis: object,
     triage: object,
     patient_info: dict[str, Any],
     image_base64: str | None,
     detections: list[dict] | None,
     annotated_image_base64: str | None,
-) -> str | None:
+) -> tuple[str | None, str | None]:
     if not report_requested:
-        return None
+        return None, None
     if not isinstance(diagnosis, dict) or not isinstance(triage, dict):
-        return None
+        return None, "Clinical analysis is incomplete, so a report cannot be generated yet."
+
+    missing_fields = _missing_patient_fields(patient_info)
+    if actor_role != "doctor" and missing_fields:
+        return None, (
+            "Before I regenerate the PDF, I still need the patient's "
+            + ", ".join(missing_fields)
+            + "."
+        )
 
     try:
-        payload = await generate_patient_pdf_impl(
-            diagnosis=diagnosis,
-            triage=triage,
-            patient_info=patient_info,
-            recommendations=[
-                str(triage.get("recommended_timeframe") or "Follow clinician guidance promptly."),
-                "Bring this report and annotated image for in-person review.",
-            ],
-            image_base64=image_base64,
-            detections=detections,
-            annotated_image_base64=annotated_image_base64,
-        )
+        if actor_role == "doctor":
+            payload = await generate_clinician_simple_pdf_impl(
+                diagnosis=diagnosis,
+                triage=triage,
+                metadata={
+                    "patient_id": str(patient_info.get("patient_id") or "unknown"),
+                    "body_part": str(patient_info.get("body_part") or ""),
+                    "doctor_name": str(patient_info.get("doctor") or ""),
+                    "patient_name": str(patient_info.get("name") or ""),
+                    "patient_age": str(patient_info.get("age") or ""),
+                    "patient_gender": str(patient_info.get("gender") or ""),
+                },
+                recommendations=[
+                    str(triage.get("recommended_timeframe") or "Follow clinical protocol for this triage level."),
+                    "Review the annotated image alongside the patient history.",
+                ],
+                image_base64=image_base64,
+                detections=detections,
+                annotated_image_base64=annotated_image_base64,
+            )
+        else:
+            payload = await generate_patient_pdf_impl(
+                diagnosis=diagnosis,
+                triage=triage,
+                patient_info=patient_info,
+                recommendations=[
+                    str(triage.get("recommended_timeframe") or "Follow clinician guidance promptly."),
+                    "Bring this report and annotated image for in-person review.",
+                ],
+                image_base64=image_base64,
+                detections=detections,
+                annotated_image_base64=annotated_image_base64,
+            )
         generated_url = payload.get("pdf_url")
-        return generated_url if isinstance(generated_url, str) and generated_url else None
-    except Exception:
-        return None
+        if isinstance(generated_url, str) and generated_url:
+            return generated_url, None
+        return None, "The report tool returned no PDF URL."
+    except Exception as exc:
+        logger.exception("Direct report generation fallback failed")
+        return None, f"Report generation failed: {exc}"
 
 
 async def _ensure_session_access(chat_id: str, actor_id: str, actor_role: str) -> dict:
@@ -403,6 +459,8 @@ async def get_chat_trace(
 
 @router.post("/chat/sessions/{chat_id}/messages", response_model=AgentResponse)
 async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
+    from graph.graph import run_agent
+
     actor_role = _normalize_role(request.actor_role)
     session = await _ensure_session_access(chat_id, request.actor_id, actor_role)
 
@@ -480,6 +538,24 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
     merged_patient_info = {**stored_patient_info, **{k: v for k, v in patient_info.items() if v}}
     if _existing_mongo_patient_id:
         merged_patient_info["patient_id"] = _existing_mongo_patient_id
+
+    _report_requested_now = any(k in _msg_lower for k in _REPORT_KEYWORDS)
+    _provided_patient_updates = {
+        key: patient_info.get(key)
+        for key in ("name", "age", "gender", "doctor")
+        if patient_info.get(key) not in (None, "")
+    }
+    _patient_info_changed_for_report = any(
+        not _same_patient_value(value, stored_patient_info.get(key))
+        for key, value in _provided_patient_updates.items()
+    )
+
+    if _report_requested_now and _patient_info_changed_for_report:
+        logger.info(
+            "chat_id={} report request includes updated patient info; clearing stale report_url",
+            chat_id,
+        )
+        pipeline_state.pop("report_url", None)
 
     logger.info("chat_id={} actor_role={} fresh_image={} patient_info_keys={}",
                 chat_id, actor_role, fresh_image, list(merged_patient_info.keys()))
@@ -679,8 +755,27 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
         except Exception:
             pass
 
-    # Report URL comes exclusively from the agent graph.
+    report_requested_this_turn = _report_requested(request.message)
+
+    # Prefer the graph-generated report, but explicitly requested reports should
+    # still complete even if the graph fails to emit a report URL.
     report_url = result.get("report_url") if isinstance(result.get("report_url"), str) else None
+    report_error: str | None = None
+    if not report_url and report_requested_this_turn:
+        fallback_url, report_error = await _ensure_report(
+            report_requested=True,
+            actor_role=actor_role,
+            diagnosis=result.get("diagnosis"),
+            triage=result.get("triage_result"),
+            patient_info=best_pi,
+            image_base64=image_data,
+            detections=result.get("detections") if isinstance(result.get("detections"), list) else None,
+            annotated_image_base64=annotated_image_base64,
+        )
+        if fallback_url:
+            report_url = fallback_url
+            result["report_url"] = fallback_url
+            logger.info("chat_id={} report generated via direct fallback", chat_id)
 
     # ── Save report to MongoDB when PDF was generated ─────────────────────────
     if report_url and mongo_service.enabled:
@@ -708,8 +803,16 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
         except Exception as _re:
             logger.warning("chat_id={} report MongoDB save failed: {}", chat_id, _re)
 
+    if report_url:
+        try:
+            await chat_store.save_pipeline_state(chat_id, {"report_url": report_url})
+        except Exception:
+            pass
+
     if report_url and report_url not in final_response:
         final_response = f"{final_response}\n\nReport: {report_url}"
+    elif report_requested_this_turn and report_error:
+        final_response = f"{final_response}\n\n{report_error}"
 
     await chat_store.append_message(
         chat_id=chat_id,

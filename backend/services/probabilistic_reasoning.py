@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import random
 from typing import Any, Dict, List, Optional, Tuple
 from loguru import logger
@@ -7,6 +8,7 @@ from datetime import datetime
 import math
 
 from services.agent_learning import adaptive_supervisor
+from services.mongo import mongo_service
 
 
 class ConfidenceEstimator:
@@ -110,17 +112,23 @@ class ConfidenceEstimator:
     def _get_learning_adjustment(self, tool_name: str, state: Dict[str, Any]) -> float:
         """Adjust confidence based on learned patterns."""
         try:
+            adjustment = 1.0
             applicable = adaptive_supervisor.find_applicable_patterns(state)
 
             for pattern in applicable:
                 # Reduce confidence for failure patterns
                 if pattern["pattern_type"] == "failure" and pattern["confidence"] > 0.7:
                     logger.info("Reducing confidence due to failure pattern: {}", pattern["pattern_id"])
-                    return 0.8
+                    adjustment *= 0.8
 
                 # Increase confidence for success patterns
                 if pattern["pattern_type"] == "success" and pattern["confidence"] > 0.8:
-                    return 1.1
+                    adjustment *= 1.1
+
+            posterior_success = bayesian_updater.get_success_probability(tool_name)
+            # Range is roughly 0.85..1.15, centered around a neutral 0.5 posterior.
+            adjustment *= 0.85 + (posterior_success * 0.30)
+            return max(0.5, min(1.25, adjustment))
 
         except Exception as e:
             logger.warning("Failed to apply learning adjustment: {}", e)
@@ -299,6 +307,35 @@ class BayesianBeliefUpdater:
         self.tool_beliefs = {}
         self.alpha = 1.0  # Prior success parameter
         self.beta = 1.0   # Prior failure parameter
+        self._initialized = False
+
+    async def ensure_initialized(self) -> None:
+        if self._initialized:
+            return
+        if not mongo_service.enabled or getattr(mongo_service, "_db", None) is None:
+            self._initialized = True
+            return
+
+        try:
+            collection = mongo_service.get_collection("tool_beliefs")
+            belief_docs = await collection.find({}).to_list(length=None)
+            for belief_doc in belief_docs:
+                tool_name = str(belief_doc.get("tool_name") or "").strip()
+                if not tool_name:
+                    continue
+                self.tool_beliefs[tool_name] = {
+                    "alpha": float(belief_doc.get("alpha", self.alpha)),
+                    "beta": float(belief_doc.get("beta", self.beta)),
+                    "prior_success": float(belief_doc.get("prior_success", 0.8)),
+                    "success_count": int(belief_doc.get("success_count", 0)),
+                    "failure_count": int(belief_doc.get("failure_count", 0)),
+                    "last_updated": belief_doc.get("last_updated", datetime.now()),
+                }
+            logger.info("Loaded {} persisted tool beliefs", len(self.tool_beliefs))
+        except Exception as e:
+            logger.warning("Failed to load persisted tool beliefs: {}", e)
+        finally:
+            self._initialized = True
 
     def initialize_belief(self, tool_name: str, prior_success: float = 0.8) -> None:
         """Initialize belief for a tool with prior success probability."""
@@ -342,6 +379,8 @@ class BayesianBeliefUpdater:
             belief["success_count"], belief["failure_count"]
         )
 
+        self._schedule_persist(tool_name)
+
     def get_success_probability(self, tool_name: str) -> float:
         """Get posterior success probability for a tool."""
         if tool_name not in self.tool_beliefs:
@@ -376,6 +415,44 @@ class BayesianBeliefUpdater:
         upper = min(1, mean + z * std_dev)
 
         return (lower, upper)
+
+    def _schedule_persist(self, tool_name: str) -> None:
+        if not mongo_service.enabled:
+            return
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        loop.create_task(self._persist_belief(tool_name))
+
+    async def _persist_belief(self, tool_name: str) -> None:
+        if not mongo_service.enabled or getattr(mongo_service, "_db", None) is None:
+            return
+        belief = self.tool_beliefs.get(tool_name)
+        if not belief:
+            return
+
+        try:
+            collection = mongo_service.get_collection("tool_beliefs")
+            await collection.update_one(
+                {"tool_name": tool_name},
+                {
+                    "$set": {
+                        "tool_name": tool_name,
+                        "alpha": belief["alpha"],
+                        "beta": belief["beta"],
+                        "prior_success": belief["prior_success"],
+                        "success_count": belief["success_count"],
+                        "failure_count": belief["failure_count"],
+                        "last_updated": belief["last_updated"],
+                    }
+                },
+                upsert=True,
+            )
+        except Exception as e:
+            logger.warning("Failed to persist belief for {}: {}", tool_name, e)
 
 
 # Global instances

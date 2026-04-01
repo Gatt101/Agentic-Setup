@@ -47,20 +47,27 @@ class MultiAgentCoordinator:
         self._initialize_agents()
 
     def _initialize_agents(self) -> None:
-        """Initialize specialized autonomous agents."""
+        """Initialize specialized autonomous agents asynchronously."""
         logger.info("Initializing multi-agent system...")
 
-        # Create specialized agents
-        clinical_agent = ClinicalAgent()
-        vision_agent = VisionAgent()
+        # Don't initialize agents during module import to prevent hanging
+        # Mark as not initialized and let it happen on first use
+        self.agents = {}
+        self.message_bus = []
+        self.consensus_history = []
+        self.collaboration_metrics = {
+            "total_collaborations": 0,
+            "successful_consensus": 0,
+            "failed_consensus": 0,
+            "average_consensus_time": 0.0
+        }
+        self.running_tasks = {}
+        self._agents_initialized = False
 
-        # Register agents
-        self.agents[clinical_agent.capabilities.agent_name] = clinical_agent
-        self.agents[vision_agent.capabilities.agent_name] = vision_agent
-
+        logger.info("Multi-agent system ready (lazy initialization)")
         logger.info(
-            "Multi-agent system initialized with {} agents: {}",
-            len(self.agents), list(self.agents.keys())
+            "Agents will be initialized on first use: {}",
+            ["clinical_agent", "vision_agent"]
         )
 
     async def coordinate_analysis(self, context: Dict[str, Any]) -> Dict[str, Any]:
@@ -71,6 +78,25 @@ class MultiAgentCoordinator:
         Agents perceive, reason, and act independently while collaborating.
         """
         logger.info("Starting multi-agent coordination for session {}", context.get("session_id", "unknown"))
+
+        # Lazy initialization: create agents on first use if not exists
+        if not self._agents_initialized:
+            logger.info("Initializing agents for first use...")
+            from agents.clinical_agent import ClinicalAgent
+            from agents.vision_agent import VisionAgent
+
+            # Create and register specialized agents
+            clinical_agent = ClinicalAgent()
+            vision_agent = VisionAgent()
+
+            self.agents[clinical_agent.capabilities.agent_name] = clinical_agent
+            self.agents[vision_agent.capabilities.agent_name] = vision_agent
+
+            self._agents_initialized = True
+            logger.info(
+                "Multi-agent agents initialized: {}",
+                list(self.agents.keys())
+            )
 
         coordination_id = str(uuid4())
         start_time = datetime.now()
@@ -463,12 +489,13 @@ class MultiAgentCoordinator:
 
         # Check if we already have a consensus result from earlier collaboration
         if "multi_agent_consensus" in execution_results:
-            consensus_data = execution_results["multi_agent_consensus"]
+            consensus_execution = execution_results["multi_agent_consensus"]
+            consensus_data = consensus_execution.get("decision", consensus_execution)
             return {
                 "consensus_reached": consensus_data.get("consensus_reached", False),
                 "final_decision": consensus_data.get("final_decision"),
                 "confidence": consensus_data.get("confidence", 0.5),
-                "participants": consensus_data.get("participant_assessments", {}).keys()
+                "participants": list(consensus_data.get("participant_assessments", {}).keys()),
             }
 
         # Otherwise, build consensus from execution results
