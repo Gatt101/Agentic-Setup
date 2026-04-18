@@ -37,6 +37,13 @@ class Settings(BaseSettings):
     hand_model_path: str = "models/hand_yolo.pt"
     leg_model_path: str = "models/leg_yolo.pt"
 
+    # CT/MRI Models
+    verse_model_path: str = ""                    # Path to VerSe nnUNet model (empty = use TotalSegmentator fallback)
+    totalsegmentator_device: str = "cpu"           # "cpu" or "cuda:0"
+    totalsegmentator_fast: bool = True             # Fast mode (3mm vs 1.5mm, much faster on CPU)
+    ct_max_volume_mb: int = 500                    # Max DICOM/NIfTI volume size in MB
+    mri_max_volume_mb: int = 500
+
     # Detection thresholds
     router_threshold: float = 0.70
     detector_score_min: float = 0.35
@@ -69,6 +76,7 @@ class Settings(BaseSettings):
     # API
     cors_allow_origins: str = "*"
     chat_request_timeout_seconds: int = 45
+    volumetric_chat_timeout_seconds: int = 7200
 
     project_root: Path = Field(default_factory=lambda: Path(__file__).resolve().parents[1])
 
@@ -101,6 +109,18 @@ class Settings(BaseSettings):
         if not storage.is_absolute():
             storage = self.project_root / storage
         return storage.resolve()
+
+    @property
+    def dicom_storage_path(self) -> Path:
+        return self.resolved_storage_path / "raw" / "dicom"
+
+    @property
+    def nifti_storage_path(self) -> Path:
+        return self.resolved_storage_path / "raw" / "nifti"
+
+    @property
+    def segmentation_storage_path(self) -> Path:
+        return self.resolved_storage_path / "segmentations"
 
     @property
     def resolved_hand_model_path(self) -> Path:

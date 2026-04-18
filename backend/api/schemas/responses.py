@@ -8,12 +8,15 @@ class AgentResponse(BaseModel):
     message_id: str | None = None
     session_id: str
     final_response: str
+    modality: str | None = None
+    body_region: str | None = None
     body_part: str | None = None
     diagnosis: dict | None = None
     triage: dict | None = None
     hospitals: list[dict] | None = None
     report_url: str | None = None
     annotated_image_base64: str | None = None
+    annotated_slices_base64: list[str] | None = None
     agent_trace: list[dict] | None = None
 
 

@@ -82,6 +82,50 @@ def _inject_image_data_into_vision_calls(state: AgentState) -> AgentState:
     return {**state, "messages": messages}
 
 
+def _inject_volume_data_into_medical_calls(state: AgentState) -> AgentState:
+    volume_path = state.get("volume_path")
+    if not isinstance(volume_path, str) or not volume_path.strip():
+        return state
+
+    messages = list(state.get("messages", []))
+    if not messages:
+        return state
+
+    last_message = messages[-1]
+    tool_calls = getattr(last_message, "tool_calls", None)
+    if not isinstance(tool_calls, list):
+        return state
+
+    changed = False
+    updated_calls = []
+    for call in tool_calls:
+        if not isinstance(call, dict):
+            updated_calls.append(call)
+            continue
+
+        name = str(call.get("name", ""))
+        if not (name.startswith("ct_") or name.startswith("mri_")):
+            updated_calls.append(call)
+            continue
+
+        args = call.get("args") if isinstance(call.get("args"), dict) else {}
+        if args.get("volume_path") != volume_path:
+            call = {**call, "args": {**args, "volume_path": volume_path}}
+            changed = True
+
+        updated_calls.append(call)
+
+    if not changed:
+        return state
+
+    try:
+        messages[-1] = last_message.model_copy(update={"tool_calls": updated_calls})
+    except Exception:
+        return state
+
+    return {**state, "messages": messages}
+
+
 def _default_recommendations(state: AgentState) -> list[str]:
     triage = state.get("triage_result")
     diagnosis = state.get("diagnosis")
@@ -101,6 +145,53 @@ def _default_recommendations(state: AgentState) -> list[str]:
     return recommendations
 
 
+def _planned_tool_trace_events(state: AgentState) -> tuple[list[dict], list[str]]:
+    messages = list(state.get("messages", []))
+    if not messages:
+        return [], []
+
+    last_message = messages[-1]
+    tool_calls = getattr(last_message, "tool_calls", None)
+    if not isinstance(tool_calls, list):
+        return [], []
+
+    events: list[dict] = []
+    long_running_tools: list[str] = []
+    for call in tool_calls:
+        if not isinstance(call, dict):
+            continue
+        tool_name = str(call.get("name", "")).strip()
+        if not tool_name:
+            continue
+        events.append(
+            {
+                "type": "tool_execution_started",
+                "tool_name": tool_name,
+            }
+        )
+        if tool_name.startswith(("ct_", "mri_")):
+            long_running_tools.append(tool_name)
+
+    return events, long_running_tools
+
+
+async def _tool_progress_heartbeat(session_id: str, tool_names: list[str]) -> None:
+    while True:
+        await asyncio.sleep(15)
+        for tool_name in tool_names:
+            try:
+                await chat_store.append_trace_event(
+                    session_id,
+                    {
+                        "type": "tool_progress",
+                        "tool_name": tool_name,
+                        "message": "Still running. Volumetric analysis is in progress.",
+                    },
+                )
+            except Exception:
+                continue
+
+
 def _inject_state_into_report_calls(state: AgentState) -> AgentState:
     messages = list(state.get("messages", []))
     if not messages:
@@ -114,8 +205,11 @@ def _inject_state_into_report_calls(state: AgentState) -> AgentState:
     diagnosis = state.get("diagnosis") if isinstance(state.get("diagnosis"), dict) else {}
     triage = state.get("triage_result") if isinstance(state.get("triage_result"), dict) else {}
     detections = state.get("detections") if isinstance(state.get("detections"), list) else []
+    ct_findings = state.get("ct_findings") if isinstance(state.get("ct_findings"), list) else []
+    mri_findings = state.get("mri_findings") if isinstance(state.get("mri_findings"), list) else []
+    unified_findings = detections or ct_findings or mri_findings
     patient_id = str(state.get("patient_id") or "unknown")
-    body_part = str(state.get("body_part") or "unknown")
+    body_part = str(state.get("body_part") or state.get("body_region") or "unknown")
     report_url = state.get("report_url")
     actor_name = str(state.get("actor_name") or "")
     actor_role = str(state.get("actor_role") or "patient").lower()
@@ -149,7 +243,7 @@ def _inject_state_into_report_calls(state: AgentState) -> AgentState:
         if name == "clinical_generate_diagnosis":
             merged = {**args}
             if not isinstance(merged.get("detections"), list):
-                merged["detections"] = detections
+                merged["detections"] = unified_findings
             if not isinstance(merged.get("symptoms"), str) or not str(merged.get("symptoms")).strip():
                 merged["symptoms"] = str(state.get("symptoms") or "")
             if not isinstance(merged.get("body_part"), str) or not str(merged.get("body_part")).strip():
@@ -162,7 +256,7 @@ def _inject_state_into_report_calls(state: AgentState) -> AgentState:
             if not isinstance(merged.get("diagnosis"), dict):
                 merged["diagnosis"] = diagnosis
             if not isinstance(merged.get("detections"), list):
-                merged["detections"] = detections
+                merged["detections"] = unified_findings
             if not isinstance(merged.get("patient_vitals"), str) or not str(merged.get("patient_vitals")).strip():
                 merged["patient_vitals"] = str(state.get("symptoms") or "")
             call = {**call, "args": merged}
@@ -255,10 +349,31 @@ def _inject_state_into_report_calls(state: AgentState) -> AgentState:
 async def tool_executor_node(state: AgentState, config=None) -> dict:
     # Important: forward runtime config from graph execution to avoid missing runtime keys.
     prepared_state = _inject_image_data_into_vision_calls(state)
+    prepared_state = _inject_volume_data_into_medical_calls(prepared_state)
     prepared_state = _inject_state_into_report_calls(prepared_state)
-    result = await get_tool_executor_node().ainvoke(prepared_state, config=config)
-    updates: dict = {}
     session_id = state.get("session_id", "unknown")
+    planned_trace_events, long_running_tools = _planned_tool_trace_events(prepared_state)
+    for event in planned_trace_events:
+        try:
+            await chat_store.append_trace_event(session_id, event)
+        except Exception:
+            pass
+
+    heartbeat_task: asyncio.Task | None = None
+    if long_running_tools:
+        heartbeat_task = asyncio.create_task(_tool_progress_heartbeat(session_id, long_running_tools))
+
+    try:
+        result = await get_tool_executor_node().ainvoke(prepared_state, config=config)
+    finally:
+        if heartbeat_task:
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except asyncio.CancelledError:
+                pass
+
+    updates: dict = {}
     trace_events: list[dict] = []
 
     # Track tool execution outcomes for learning
@@ -310,9 +425,20 @@ async def tool_executor_node(state: AgentState, config=None) -> dict:
                         # Vision tool failed to detect anything
                         execution_success = False
                         execution_error = "No detections found"
+                elif message.name.startswith("ct_") or message.name.startswith("mri_"):
+                    findings = payload.get("findings", [])
+                    if not findings or (isinstance(findings, list) and len(findings) == 0):
+                        execution_success = False
+                        execution_error = "No findings returned"
                 # For clinical tools, check if results are valid
                 elif message.name.startswith("clinical_"):
-                    if not payload or (isinstance(payload, dict) and not payload.get("diagnosis") and not payload.get("triage_result")):
+                    if not payload or (
+                        isinstance(payload, dict)
+                        and not payload.get("diagnosis")
+                        and not payload.get("triage_result")
+                        and not payload.get("finding")
+                        and not payload.get("level")
+                    ):
                         execution_success = False
                         execution_error = "No valid clinical results"
 
@@ -349,10 +475,31 @@ async def tool_executor_node(state: AgentState, config=None) -> dict:
                 "payload": payload
             })
 
-        if message.name == "vision_detect_body_part":
+        if message.name == "modality_detect_imaging_modality":
+            updates["modality"] = payload.get("modality")
+            if payload.get("body_part_suggestion"):
+                updates["body_region"] = payload.get("body_part_suggestion")
+        elif message.name == "modality_parse_dicom":
+            updates["dicom_metadata"] = payload.get("metadata")
+            if payload.get("body_part"):
+                updates["body_region"] = payload.get("body_part")
+            if payload.get("modality"):
+                updates["modality"] = payload.get("modality")
+        elif message.name == "modality_extract_mid_slice":
+            if payload.get("mid_slice_base64"):
+                updates["annotated_slices_base64"] = [payload.get("mid_slice_base64")]
+        elif message.name == "vision_detect_body_part":
             updates["body_part"] = payload.get("body_part")
         elif message.name in {"vision_detect_hand_fracture", "vision_detect_leg_fracture"}:
             updates["detections"] = payload.get("detections", [])
+        elif message.name.startswith("ct_"):
+            updates["ct_findings"] = payload.get("findings", [])
+            if payload.get("annotated_slices_base64"):
+                updates["annotated_slices_base64"] = payload.get("annotated_slices_base64")
+        elif message.name.startswith("mri_"):
+            updates["mri_findings"] = payload.get("findings", [])
+            if payload.get("annotated_slices_base64"):
+                updates["annotated_slices_base64"] = payload.get("annotated_slices_base64")
         elif message.name == "clinical_generate_diagnosis":
             updates["diagnosis"] = payload
         elif message.name == "clinical_assess_triage":
@@ -362,8 +509,8 @@ async def tool_executor_node(state: AgentState, config=None) -> dict:
         elif message.name in {"report_generate_patient_pdf", "report_generate_clinician_pdf", "report_generate_clinician_simple_pdf"}:
             updates["report_url"] = payload.get("pdf_url")
 
-    if trace_events:
-        updates["agent_trace"] = [*state.get("agent_trace", []), *trace_events]
+    if planned_trace_events or trace_events:
+        updates["agent_trace"] = [*state.get("agent_trace", []), *planned_trace_events, *trace_events]
 
     # Store tool execution outcomes for learning system
     if tool_execution_outcomes:

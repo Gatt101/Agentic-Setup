@@ -19,6 +19,16 @@ from core.exceptions import AgentExecutionError
 from services.chat_store import chat_store
 from services.mongo import mongo_service
 from services.patient_store import patient_store
+from tools.modality.dicom_utils import (
+    dicom_bytes_to_image_data_url,
+    dicom_bytes_to_nifti_file,
+    dicom_series_to_nifti_file,
+    extract_dicom_files_from_zip_bytes,
+    is_dicom,
+    normalize_body_part,
+    normalize_dicom_series,
+    read_dicom_metadata,
+)
 from tools.report.clinician_simple_pdf import generate_clinician_simple_pdf_impl
 from tools.report.patient_pdf import generate_patient_pdf_impl
 from tools.utils import decode_image_base64, strip_data_url
@@ -40,9 +50,20 @@ def _classify_attachment(attachment: str | None) -> str:
 
     normalized = attachment.strip().lower()
     if normalized.startswith("data:"):
+        if "application/dicom" in normalized:
+            return "dicom"
         if normalized.startswith("data:image/"):
             return "image"
         try:
+            raw = base64.b64decode(strip_data_url(attachment), validate=False)
+            if is_dicom(raw):
+                return "dicom"
+            if raw.startswith(b"PK"):
+                try:
+                    if extract_dicom_files_from_zip_bytes(raw):
+                        return "dicom"
+                except Exception:
+                    pass
             decode_image_base64(attachment)
             return "image"
         except Exception:
@@ -54,9 +75,17 @@ def _classify_attachment(attachment: str | None) -> str:
     except (ValueError, binascii.Error):
         return "document_or_other"
 
+    if is_dicom(raw):
+        return "dicom"
+
     if raw.startswith(b"%PDF"):
         return "document_or_other"
     if raw.startswith(b"PK"):
+        try:
+            if extract_dicom_files_from_zip_bytes(raw):
+                return "dicom"
+        except Exception:
+            pass
         return "document_or_other"
 
     try:
@@ -64,6 +93,162 @@ def _classify_attachment(attachment: str | None) -> str:
         return "image"
     except Exception:
         return "document_or_other"
+
+
+def _decode_base64_payload(payload: str) -> bytes:
+    body = payload.split(",", 1)[1] if payload.strip().startswith("data:") and "," in payload else payload
+    return base64.b64decode(body)
+
+
+def _normalize_attachments(request: ChatRequest) -> list[str]:
+    attachments = [item for item in (request.attachments or []) if isinstance(item, str) and item.strip()]
+    if attachments:
+        return attachments
+    if isinstance(request.attachment, str) and request.attachment.strip():
+        return [request.attachment]
+    return []
+
+
+def _validate_volumetric_series(
+    *,
+    modality: str | None,
+    metadata: dict[str, Any],
+    volume_info: dict[str, Any],
+) -> str | None:
+    if modality not in {"ct", "mri"}:
+        return None
+
+    spacing = volume_info.get("spacing")
+    slice_thickness = metadata.get("slice_thickness_mm")
+    slice_count = int(volume_info.get("slice_count") or 0)
+
+    spacing_z = None
+    if isinstance(spacing, list) and len(spacing) >= 3:
+        try:
+            spacing_z = float(spacing[2])
+        except Exception:
+            spacing_z = None
+
+    try:
+        nominal_thickness = float(slice_thickness) if slice_thickness is not None else None
+    except Exception:
+        nominal_thickness = None
+
+    if spacing_z is not None and nominal_thickness is not None:
+        if spacing_z > max(5.0, nominal_thickness * 3.0):
+            return (
+                "The uploaded CT/MRI series appears incomplete or has missing slices. "
+                f"Detected z-spacing is {spacing_z:.2f} mm while slice thickness is {nominal_thickness:.2f} mm. "
+                "Please upload the full contiguous DICOM series or a zip exported from the viewer/PACS."
+            )
+
+    if slice_count and slice_count < 8 and spacing_z is not None and spacing_z >= 3.0:
+        return (
+            "The uploaded CT/MRI series is too sparse for reliable 3D analysis. "
+            f"Only {slice_count} slices were assembled with {spacing_z:.2f} mm z-spacing. "
+            "Please upload the full DICOM series instead of a partial selection."
+        )
+
+    return None
+
+
+def _prepare_attachment_inputs(session_id: str, attachments: list[str]) -> dict[str, Any]:
+    attachment = attachments[0] if attachments else None
+    attachment_kind = _classify_attachment(attachment)
+    prepared: dict[str, Any] = {
+        "attachment_kind": attachment_kind,
+        "image_data": attachment if attachment_kind == "image" else None,
+        "volume_path": None,
+        "dicom_metadata": None,
+        "modality": None,
+        "body_region": None,
+        "error_message": None,
+    }
+
+    if not attachments:
+        return prepared
+
+    attachment_kinds = [_classify_attachment(item) for item in attachments]
+    if any(kind != "dicom" for kind in attachment_kinds):
+        return prepared
+
+    prepared["attachment_kind"] = "dicom"
+
+    dicom_entries = []
+    for item in attachments:
+        raw_payload = _decode_base64_payload(item)
+        payloads = [raw_payload]
+        if not is_dicom(raw_payload):
+            payloads = extract_dicom_files_from_zip_bytes(raw_payload)
+        for dicom_bytes in payloads:
+            metadata = read_dicom_metadata(dicom_bytes)
+            dicom_entries.append({
+                "attachment": item,
+                "bytes": dicom_bytes,
+                "metadata": metadata,
+            })
+
+    if not dicom_entries:
+        prepared["error_message"] = "The uploaded archive does not contain any readable DICOM files."
+        return prepared
+
+    normalized_entries, normalization_info = normalize_dicom_series(
+        [entry["bytes"] for entry in dicom_entries]
+    )
+    dicom_entries = normalized_entries
+
+    first_entry = dicom_entries[0]
+    metadata = first_entry["metadata"]
+    modality = metadata.get("modality")
+    body_region = normalize_body_part(
+        str(metadata.get("body_part_examined") or ""),
+        str(metadata.get("study_description") or ""),
+        str(metadata.get("series_description") or ""),
+    )
+
+    prepared["dicom_metadata"] = metadata
+    prepared["modality"] = modality
+    prepared["body_region"] = body_region
+
+    if modality == "xray":
+        prepared["image_data"] = dicom_bytes_to_image_data_url(first_entry["bytes"])
+        return prepared
+
+    if modality in {"ct", "mri"} and len(dicom_entries) < 2:
+        prepared["error_message"] = (
+            "This CT/MRI upload contains only a single DICOM slice. Volumetric analysis requires the full DICOM series, "
+            "so please upload multiple slices from the same study together."
+        )
+        return prepared
+
+    settings.dicom_storage_path.mkdir(parents=True, exist_ok=True)
+    settings.nifti_storage_path.mkdir(parents=True, exist_ok=True)
+    nifti_path = settings.nifti_storage_path / f"{session_id}.nii.gz"
+    if len(dicom_entries) == 1:
+        dicom_path = settings.dicom_storage_path / f"{session_id}.dcm"
+        dicom_path.write_bytes(first_entry["bytes"])
+        volume_path, volume_info = dicom_bytes_to_nifti_file(first_entry["bytes"], str(nifti_path))
+    else:
+        volume_path, volume_info = dicom_series_to_nifti_file(
+            [entry["bytes"] for entry in dicom_entries],
+            str(nifti_path),
+        )
+    volumetric_error = _validate_volumetric_series(
+        modality=modality,
+        metadata=metadata,
+        volume_info=volume_info,
+    )
+    if volumetric_error:
+        prepared["error_message"] = volumetric_error
+        return prepared
+    prepared["volume_path"] = volume_path
+    prepared["dicom_metadata"] = {
+        **metadata,
+        **normalization_info,
+        **volume_info,
+        "slice_count": len(dicom_entries),
+    }
+    return prepared
 
 
 def _extract_latest_image_data(history: list[dict]) -> str | None:
@@ -195,6 +380,13 @@ def _agent_error_message(detail: str) -> str:
         "I hit an internal processing issue and could not complete this request. "
         "Please retry in a moment."
     )
+
+
+def _chat_timeout_seconds(*, volume_path: str | None, modality: str | None) -> int:
+    base_timeout = max(5, settings.chat_request_timeout_seconds)
+    if volume_path or modality in {"ct", "mri"}:
+        return max(base_timeout, settings.volumetric_chat_timeout_seconds)
+    return base_timeout
 
 
 def _normalize_role(role: str) -> str:
@@ -464,18 +656,26 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
     actor_role = _normalize_role(request.actor_role)
     session = await _ensure_session_access(chat_id, request.actor_id, actor_role)
 
-    attachment = request.attachment
+    attachments = _normalize_attachments(request)
+    attachment = attachments[0] if attachments else None
     message = request.message
-    attachment_kind = _classify_attachment(attachment)
-    image_data = attachment if attachment_kind == "image" else None
+    attachment_inputs = _prepare_attachment_inputs(chat_id, attachments)
+    attachment_kind = attachment_inputs["attachment_kind"]
+    image_data = attachment_inputs["image_data"]
+    volume_path = attachment_inputs["volume_path"]
+    dicom_metadata = attachment_inputs["dicom_metadata"]
+    modality = attachment_inputs["modality"]
+    body_region = attachment_inputs["body_region"]
+    attachment_error_message = attachment_inputs["error_message"]
     fresh_image = image_data is not None  # True only when user uploaded image in THIS message
+    fresh_visual_input = bool(image_data or volume_path)
     history_before = await chat_store.get_messages(chat_id)
-    if image_data is None:
+    if image_data is None and volume_path is None:
         image_data = _extract_latest_image_data(history_before)
 
     # When the user sends a fresh image, they are starting a new analysis —
     # clear any pending report flag so we don't immediately ask for patient info.
-    _clear_pending_on_fresh = fresh_image
+    _clear_pending_on_fresh = fresh_visual_input
 
     if attachment_kind == "document_or_other":
         message = (
@@ -493,6 +693,22 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
         content=request.message,
         attachment_data_url=attachment,
     )
+
+    if attachment_error_message:
+        assistant_message_id = str(uuid4())
+        await chat_store.append_message(
+            chat_id=chat_id,
+            message_id=assistant_message_id,
+            sender_role="assistant",
+            content=attachment_error_message,
+        )
+        return AgentResponse(
+            chat_id=chat_id,
+            message_id=assistant_message_id,
+            session_id=chat_id,
+            final_response=attachment_error_message,
+            agent_trace=[],
+        )
 
     patient_info = _extract_patient_info(
         history=history_before,
@@ -528,10 +744,10 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
     #   b) user message is an analysis request (not a report request)
     if _clear_pending_on_fresh or _is_analysis_request:
         logger.info("chat_id={} clearing pending_report + clinical state (fresh_image={} analysis_keyword={})",
-                    chat_id, fresh_image, _is_analysis_request)
+                    chat_id, fresh_visual_input, _is_analysis_request)
         pipeline_state["pending_report_actor_role"] = None
         # Wipe stale clinical data so the pipeline restarts cleanly
-        for _stale_key in ("diagnosis", "triage_result", "body_part", "detections", "report_url"):
+        for _stale_key in ("diagnosis", "triage_result", "body_part", "detections", "report_url", "image_data", "volume_path", "dicom_metadata", "modality", "body_region"):
             pipeline_state.pop(_stale_key, None)
 
     # Merge persisted patient_info with freshly-extracted one (fresh extraction wins for present fields)
@@ -558,7 +774,7 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
         pipeline_state.pop("report_url", None)
 
     logger.info("chat_id={} actor_role={} fresh_image={} patient_info_keys={}",
-                chat_id, actor_role, fresh_image, list(merged_patient_info.keys()))
+                chat_id, actor_role, fresh_visual_input, list(merged_patient_info.keys()))
 
     # ── Fast-path: pure intake message (name/age/gender, no image, no analysis/report keyword) ──
     # Skip the agent entirely so the LLM never gets a chance to re-ask for info
@@ -654,6 +870,10 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
         "user_message": message,
         "messages": _history_to_langchain_messages(history_before, message),
         "image_data": image_data,
+        "volume_path": volume_path,
+        "dicom_metadata": dicom_metadata,
+        "modality": modality,
+        "body_region": body_region,
         "patient_id": _existing_mongo_patient_id or session.get("patient_id") or request.patient_id,
         "location": request.location,
         "actor_role": actor_role,
@@ -664,13 +884,23 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
     }
 
     logger.info("chat_id={} invoking agent", chat_id)
+    request_timeout_seconds = _chat_timeout_seconds(volume_path=volume_path, modality=modality)
     try:
         result = await asyncio.wait_for(
             run_agent(payload),
-            timeout=max(5, settings.chat_request_timeout_seconds),
+            timeout=request_timeout_seconds,
         )
     except asyncio.TimeoutError:
-        logger.warning("chat_id={} agent timed out after {}s", chat_id, settings.chat_request_timeout_seconds)
+        logger.warning("chat_id={} agent timed out after {}s", chat_id, request_timeout_seconds)
+        if volume_path or modality in {"ct", "mri"}:
+            raise HTTPException(
+                status_code=504,
+                detail=(
+                    "Volumetric CT/MRI analysis timed out. On first run the backend may still be downloading "
+                    "segmentation model weights, and CPU inference can take several minutes. Please retry or increase "
+                    "VOLUMETRIC_CHAT_TIMEOUT_SECONDS."
+                ),
+            )
         raise HTTPException(status_code=504, detail="Chat request timed out.")
     except AgentExecutionError as exc:
         raise HTTPException(status_code=500, detail=_agent_error_message(str(exc))) from exc
@@ -689,7 +919,7 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
 
     # ── Persist updated clinical pipeline state back to session ──────────────
     new_pipeline: dict = {}
-    for _k in ("diagnosis", "triage_result", "body_part", "detections"):
+    for _k in ("diagnosis", "triage_result", "body_part", "detections", "image_data", "volume_path", "dicom_metadata", "modality", "body_region"):
         _v = result.get(_k)
         if _v is not None:
             new_pipeline[_k] = _v
@@ -874,6 +1104,7 @@ async def chat_with_agent(request: ChatRequest) -> AgentResponse:
         message=request.message,
         session_id=chat_id,
         attachment=request.attachment,
+        attachments=request.attachments,
         patient_id=request.patient_id,
         location=request.location,
     )

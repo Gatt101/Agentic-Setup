@@ -13,6 +13,7 @@ export type ChatAttachment = {
 export type AgentTraceStep = {
   active_agent?: string;
   iteration?: number;
+  message?: string;
   tool_calls?: string[];
   tool_name?: string;
   type?: string;
@@ -77,7 +78,9 @@ type UseChatOptions = {
 
 type SendMessageInput = {
   attachment?: string | null;
+  attachments?: string[] | null;
   attachmentMeta?: ChatAttachment | null;
+  isVolumetric?: boolean;
   text: string;
 };
 
@@ -86,6 +89,10 @@ const RAW_CHAT_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_CHAT_TIMEOUT_MS ?? 60
 const CHAT_TIMEOUT_MS = Number.isFinite(RAW_CHAT_TIMEOUT_MS) && RAW_CHAT_TIMEOUT_MS > 0
   ? Math.max(30000, RAW_CHAT_TIMEOUT_MS)
   : 60000;
+const RAW_VOLUMETRIC_CHAT_TIMEOUT_MS = Number(process.env.NEXT_PUBLIC_VOLUMETRIC_CHAT_TIMEOUT_MS ?? 7200000);
+const VOLUMETRIC_CHAT_TIMEOUT_MS = Number.isFinite(RAW_VOLUMETRIC_CHAT_TIMEOUT_MS) && RAW_VOLUMETRIC_CHAT_TIMEOUT_MS > 0
+  ? Math.max(CHAT_TIMEOUT_MS, RAW_VOLUMETRIC_CHAT_TIMEOUT_MS)
+  : 900000;
 
 function createMessageId(prefix: string): string {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -232,9 +239,12 @@ export function useChat({ actorId, actorName, actorRole, initialChatId, openingM
   }, [actorId, actorRole, chatId, patientId]);
 
   const sendMessage = useCallback(
-    async ({ text: rawText, attachment, attachmentMeta }: SendMessageInput) => {
+    async ({ text: rawText, attachment, attachments, attachmentMeta, isVolumetric }: SendMessageInput) => {
       const text = rawText.trim();
-      const hasAttachment = Boolean(attachment || attachmentMeta);
+      const normalizedAttachments = (attachments ?? []).filter(
+        (value): value is string => typeof value === "string" && value.length > 0
+      );
+      const hasAttachment = Boolean(attachment || attachmentMeta || normalizedAttachments.length > 0);
 
       if ((!text && !hasAttachment) || isLoading) {
         return;
@@ -258,9 +268,10 @@ export function useChat({ actorId, actorName, actorRole, initialChatId, openingM
       const currentChatId = await ensureChatSession(userMessage);
       const controller = new AbortController();
       abortRef.current = controller;
+      const requestTimeoutMs = isVolumetric ? VOLUMETRIC_CHAT_TIMEOUT_MS : CHAT_TIMEOUT_MS;
       const timeoutHandle = setTimeout(() => {
         controller.abort();
-      }, CHAT_TIMEOUT_MS);
+      }, requestTimeoutMs);
 
       const pollTrace = async () => {
         try {
@@ -292,6 +303,7 @@ export function useChat({ actorId, actorName, actorRole, initialChatId, openingM
             actor_name: actorName ?? undefined,
             actor_role: actorRole,
             attachment: attachment ?? undefined,
+            attachments: normalizedAttachments.length > 0 ? normalizedAttachments : undefined,
             message: text || "Please analyze the attached file.",
             patient_id: patientId ?? undefined,
             session_id: currentChatId,

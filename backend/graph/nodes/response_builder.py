@@ -114,7 +114,7 @@ async def response_builder_node(state: AgentState) -> dict:
         return {"final_response": "Your report is already available. Use the download button below."}
 
     if report_requested and not (diagnosis and triage):
-        if not state.get("image_data"):
+        if not state.get("image_data") and not state.get("volume_path"):
             return {
                 "final_response": (
                     "I cannot generate the PDF yet. I have "

@@ -89,9 +89,9 @@ export function ChatInput({
 
   return (
     <PromptInput
-      accept="image/*,.pdf,.doc,.docx"
+      accept="image/*,.dcm,.dicom,application/dicom,application/dicom+json,.zip,application/zip,application/x-zip-compressed,.pdf,.doc,.docx"
       className="rounded-xl border border-slate-200 bg-white/95 dark:border-slate-800 dark:bg-slate-950/70"
-      maxFiles={4}
+      maxFiles={64}
       multiple
       onSubmit={handleSubmit}
       syncHiddenInput={false}

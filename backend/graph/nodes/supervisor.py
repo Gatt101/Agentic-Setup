@@ -12,7 +12,7 @@ from services.probabilistic_reasoning import (
     probabilistic_reasoner,
     bayesian_updater
 )
-from tools import ALL_TOOLS
+from tools import ALL_TOOLS, IMAGE_TOOL_NAMES, CT_NAMESPACE, MRI_NAMESPACE, MODALITY_NAMESPACE
 
 SUPERVISOR_PROMPT = """You are an autonomous orthopedic AI clinical assistant with enhanced decision-making capabilities.
 
@@ -23,7 +23,10 @@ CORE PRINCIPLES:
 4. Learn from pipeline state to make informed decisions about next steps.
 
 CLINICAL WORKFLOW GUIDANCE:
-1. Image Analysis: When X-ray images are provided, systematically analyze using vision tools.
+1. Image Analysis: When imaging data is provided, systematically analyze using appropriate tools.
+   - X-ray (modality=xray): Use vision tools (vision_detect_body_part, vision_detect_hand/leg_fracture)
+   - CT (modality=ct): Use CT tools (ct_analyze_full_body, ct_analyze_spine, ct_analyze_appendicular)
+   - MRI (modality=mri): Use MRI tools (mri_analyze_knee, mri_analyze_spine)
 2. Diagnosis: Formulate diagnoses based on detection findings and clinical reasoning.
 3. Triage Assessment: Evaluate urgency and recommend appropriate care timelines.
 4. Knowledge Integration: Use clinical knowledge tools to support decision-making when needed.
@@ -90,17 +93,40 @@ def _build_pipeline_context(state: AgentState) -> str:
         f"Actor role: {actor_role}" + (f" | Actor name: {actor_name}" if actor_name else "")
     )
 
+    modality = state.get("modality")
+    if modality:
+        lines.append(f"Modality: {modality.upper()}")
+
+    body_region = state.get("body_region")
+    if body_region:
+        lines.append(f"Body region: {body_region}")
+
     if state.get("image_data"):
-        lines.append("Image: available")
+        lines.append("Image: available (X-ray)")
+
+    if state.get("volume_path"):
+        lines.append(f"Volume: available ({state['modality'] or 'CT/MRI'})")
 
     if state.get("body_part"):
         lines.append(f"Body part: {state['body_part']}")
 
     detections = state.get("detections")
     if isinstance(detections, list):
-        lines.append(f"Detections: {len(detections)} finding(s)")
+        lines.append(f"X-ray Detections: {len(detections)} finding(s)")
     else:
-        lines.append("Detections: NOT YET")
+        lines.append("X-ray Detections: NOT YET")
+
+    ct_findings = state.get("ct_findings")
+    if isinstance(ct_findings, list):
+        lines.append(f"CT Findings: {len(ct_findings)} structure(s)")
+    elif modality == "ct":
+        lines.append("CT Findings: NOT YET")
+
+    mri_findings = state.get("mri_findings")
+    if isinstance(mri_findings, list):
+        lines.append(f"MRI Findings: {len(mri_findings)} structure(s)")
+    elif modality == "mri":
+        lines.append("MRI Findings: NOT YET")
 
     diagnosis = state.get("diagnosis")
     if isinstance(diagnosis, dict):
@@ -179,6 +205,9 @@ def _tool_to_agent(tool_name: str | None) -> str | None:
         "knowledge": "knowledge_agent",
         "report": "report_agent",
         "hospital": "hospital_agent",
+        "ct": "ct_agent",
+        "mri": "mri_agent",
+        "modality": "modality_agent",
     }
     return mapping.get(namespace)
 
@@ -211,8 +240,15 @@ def _autonomous_safety_gate(state: AgentState, llm_decision: dict | None) -> dic
     # Safety checks for clinical tools
     if tool_name == "clinical_generate_diagnosis":
         detections = state.get("detections")
-        if not detections or not isinstance(detections, list) or len(detections) == 0:
-            logger.warning("Autonomy safety gate: clinical_generate_diagnosis blocked - no detections")
+        ct_findings = state.get("ct_findings")
+        mri_findings = state.get("mri_findings")
+        has_findings = (
+            (isinstance(detections, list) and len(detections) > 0)
+            or (isinstance(ct_findings, list) and len(ct_findings) > 0)
+            or (isinstance(mri_findings, list) and len(mri_findings) > 0)
+        )
+        if not has_findings:
+            logger.warning("Autonomy safety gate: clinical_generate_diagnosis blocked - no findings")
             return None
 
     if tool_name == "clinical_assess_triage":
@@ -270,27 +306,41 @@ def _multi_agent_recommendation(state: AgentState) -> dict | None:
 def _enhanced_context_aware_suggestion(state: AgentState) -> dict | None:
     """Provide context-aware suggestions with probabilistic reasoning."""
     body_part = state.get("body_part")
+    body_region = state.get("body_region")
     detections = state.get("detections")
+    ct_findings = state.get("ct_findings")
+    mri_findings = state.get("mri_findings")
     diagnosis = state.get("diagnosis")
     triage = state.get("triage_result")
+    modality = state.get("modality")
 
-    # Only provide guidance when clinically appropriate, not forced
     candidates = []
 
-    if not body_part and state.get("image_data"):
-        # Use probabilistic reasoning to estimate confidence
+    if state.get("image_data") and not modality:
+        confidence = confidence_estimator.estimate_tool_confidence(
+            "modality_detect_imaging_modality",
+            {"image_data": state.get("image_data")}
+        )
+        candidates.append({
+            "reasoning": "No modality detected yet, need to classify imaging type",
+            "suggested_action": "modality_detect_imaging_modality",
+            "confidence": confidence,
+            "uncertainty_level": "high"
+        })
+
+    if modality == "xray" and not body_part and state.get("image_data"):
         confidence = confidence_estimator.estimate_tool_confidence(
             "vision_detect_body_part",
             {"image_data": state.get("image_data")}
         )
         candidates.append({
-            "reasoning": "No body part detected yet",
+            "reasoning": "X-ray detected, no body part classified yet",
             "suggested_action": "vision_detect_body_part",
             "confidence": confidence,
             "uncertainty_level": "high" if confidence < 0.8 else "moderate"
         })
 
-    if body_part and not detections:
+    if modality == "xray" and body_part and not detections:
         if body_part == "hand":
             confidence = confidence_estimator.estimate_tool_confidence(
                 "vision_detect_hand_fracture",
@@ -314,7 +364,69 @@ def _enhanced_context_aware_suggestion(state: AgentState) -> dict | None:
                 "uncertainty_level": "high" if confidence < 0.8 else "moderate"
             })
 
-    if detections and not diagnosis:
+    if modality == "ct" and not ct_findings and state.get("volume_path"):
+        region = body_region or "full"
+        if region == "spine":
+            confidence = confidence_estimator.estimate_tool_confidence(
+                "ct_analyze_spine",
+                {"modality": "ct", "body_region": "spine"}
+            )
+            candidates.append({
+                "reasoning": "CT spine detected, vertebrae segmentation needed",
+                "suggested_action": "ct_analyze_spine",
+                "confidence": confidence,
+                "uncertainty_level": "high" if confidence < 0.8 else "moderate"
+            })
+        elif region in ("foot", "ankle", "hand", "wrist", "knee", "elbow"):
+            confidence = confidence_estimator.estimate_tool_confidence(
+                "ct_analyze_appendicular",
+                {"modality": "ct", "body_region": region}
+            )
+            candidates.append({
+                "reasoning": f"CT {region} detected, appendicular bone segmentation needed",
+                "suggested_action": "ct_analyze_appendicular",
+                "confidence": confidence,
+                "uncertainty_level": "high" if confidence < 0.8 else "moderate"
+            })
+        else:
+            confidence = confidence_estimator.estimate_tool_confidence(
+                "ct_analyze_full_body",
+                {"modality": "ct"}
+            )
+            candidates.append({
+                "reasoning": "CT detected, full body bone segmentation needed",
+                "suggested_action": "ct_analyze_full_body",
+                "confidence": confidence,
+                "uncertainty_level": "high" if confidence < 0.8 else "moderate"
+            })
+
+    if modality == "mri" and not mri_findings and state.get("volume_path"):
+        region = body_region or "knee"
+        if region == "spine":
+            confidence = confidence_estimator.estimate_tool_confidence(
+                "mri_analyze_spine",
+                {"modality": "mri", "body_region": "spine"}
+            )
+            candidates.append({
+                "reasoning": "MRI spine detected, vertebrae segmentation needed",
+                "suggested_action": "mri_analyze_spine",
+                "confidence": confidence,
+                "uncertainty_level": "high" if confidence < 0.8 else "moderate"
+            })
+        else:
+            confidence = confidence_estimator.estimate_tool_confidence(
+                "mri_analyze_knee",
+                {"modality": "mri", "body_region": "knee"}
+            )
+            candidates.append({
+                "reasoning": "MRI detected, knee bone/cartilage segmentation needed",
+                "suggested_action": "mri_analyze_knee",
+                "confidence": confidence,
+                "uncertainty_level": "high" if confidence < 0.8 else "moderate"
+            })
+
+    all_findings = detections or ct_findings or mri_findings
+    if all_findings and not diagnosis:
         confidence = confidence_estimator.estimate_tool_confidence(
             "clinical_generate_diagnosis",
             {"detections": detections}
@@ -403,7 +515,18 @@ def _forced_tool_call(state: AgentState) -> dict | None:
 
 async def supervisor_node(state: AgentState) -> dict:
     has_image_data = bool(state.get("image_data"))
-    toolset = ALL_TOOLS if has_image_data else NON_VISION_TOOLS
+    has_volume_path = bool(state.get("volume_path"))
+    has_any_image = has_image_data or has_volume_path
+    modality = state.get("modality")
+
+    if modality == "ct" and has_volume_path:
+        toolset = [t for t in ALL_TOOLS if t.name not in {n for n in IMAGE_TOOL_NAMES if n.startswith("vision_") and n not in MODALITY_NAMESPACE}]
+    elif modality == "mri" and has_volume_path:
+        toolset = [t for t in ALL_TOOLS if t.name not in {n for n in IMAGE_TOOL_NAMES if n.startswith("vision_") and n not in MODALITY_NAMESPACE}]
+    elif has_any_image:
+        toolset = ALL_TOOLS
+    else:
+        toolset = NON_VISION_TOOLS
     llm = get_supervisor_llm().bind_tools(toolset)
     session_id = state.get("session_id", "unknown")
     iteration = state.get("iteration_count", 0)
@@ -438,13 +561,17 @@ async def supervisor_node(state: AgentState) -> dict:
             else "No tools have been called yet in this run."
         )
     )
-    image_context = SystemMessage(
-        content=(
-            "Valid image data is available for vision analysis."
-            if has_image_data
-            else "No valid image data is available in this turn. Do not call any vision_* tools."
-        )
-    )
+    image_context_parts = []
+    if has_image_data and not has_volume_path:
+        image_context_parts.append("Valid X-ray image data is available for vision analysis.")
+    elif has_volume_path and modality in ("ct", "mri"):
+        image_context_parts.append(f"Valid {modality.upper()} volume data is available. Use {'ct_' if modality == 'ct' else 'mri_'} tools. Do not call vision_* tools.")
+    elif has_image_data and has_volume_path:
+        image_context_parts.append("Both X-ray image and volumetric data are available.")
+    else:
+        image_context_parts.append("No valid image or volume data is available in this turn. Do not call any vision_*, ct_*, or mri_* tools.")
+
+    image_context = SystemMessage(content=" ".join(image_context_parts))
 
     learning_context = SystemMessage(content=_build_learning_context(state))
 

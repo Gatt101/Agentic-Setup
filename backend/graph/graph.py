@@ -339,6 +339,13 @@ async def run_agent(payload: dict) -> AgentState:
 
     try:
         await chat_store.init_trace(session_id)
+        await chat_store.append_trace_event(
+            session_id,
+            {
+                "type": "session_started",
+                "message": "Analysis request accepted by backend.",
+            },
+        )
     except Exception:
         pass
     logger.info("session={} agent_run_started", session_id)

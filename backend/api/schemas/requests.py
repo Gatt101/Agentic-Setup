@@ -4,7 +4,10 @@ from pydantic import BaseModel, Field
 
 
 class AnalyzeRequest(BaseModel):
-    image_data: str = Field(..., description="Base64-encoded X-ray image")
+    image_data: str | None = Field(default=None, description="Base64-encoded X-ray image")
+    dicom_data: str | None = Field(default=None, description="Base64-encoded DICOM file")
+    modality: str | None = None
+    body_region: str | None = None
     symptoms: str | None = None
     user_message: str | None = None
     patient_id: str | None = None
@@ -20,6 +23,7 @@ class ChatRequest(BaseModel):
     message: str
     session_id: str | None = None
     attachment: str | None = None
+    attachments: list[str] | None = None
     patient_id: str | None = None
     location: str | None = None
 

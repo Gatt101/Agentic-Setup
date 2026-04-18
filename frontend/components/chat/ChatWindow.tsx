@@ -80,6 +80,18 @@ function isSupportedDocType(mediaType: string | undefined): boolean {
   );
 }
 
+function isDicomLikeFile(file: PromptInputMessage["files"][number]): boolean {
+  const mediaType = typeof file.mediaType === "string" ? file.mediaType.toLowerCase() : "";
+  const filename = typeof file.filename === "string" ? file.filename.toLowerCase() : "";
+  return mediaType.includes("dicom") || filename.endsWith(".dcm") || filename.endsWith(".dicom");
+}
+
+function isDicomArchiveFile(file: PromptInputMessage["files"][number]): boolean {
+  const mediaType = typeof file.mediaType === "string" ? file.mediaType.toLowerCase() : "";
+  const filename = typeof file.filename === "string" ? file.filename.toLowerCase() : "";
+  return mediaType.includes("zip") || filename.endsWith(".zip");
+}
+
 function blobToDataUrl(blob: Blob): Promise<string | null> {
   return new Promise((resolve) => {
     const reader = new FileReader();
@@ -105,11 +117,13 @@ async function blobUrlToDataUrl(url: string): Promise<string | null> {
 
 async function pickAttachmentPayload(
   files: PromptInputMessage["files"]
-): Promise<{ payload: string | null; preview: ChatAttachment | null }> {
+): Promise<{ payload: string | null; payloads: string[]; preview: ChatAttachment | null; isVolumetric: boolean }> {
   if (files.length === 0) {
     return {
       payload: null,
+      payloads: [],
       preview: null,
+      isVolumetric: false,
     };
   }
 
@@ -128,46 +142,83 @@ async function pickAttachmentPayload(
   if (typeof preferredFile.url !== "string") {
     return {
       payload: null,
+      payloads: [],
       preview: {
         mediaType: preferredFile.mediaType,
         name,
       },
+      isVolumetric: false,
     };
   }
 
+  const toPayload = async (file: PromptInputMessage["files"][number]) => {
+    if (typeof file.url !== "string") {
+      return null;
+    }
+    if (file.url.startsWith("data:")) {
+      return file.url;
+    }
+    if (file.url.startsWith("blob:")) {
+      return await blobUrlToDataUrl(file.url);
+    }
+    return null;
+  };
+
+  const payloads = (await Promise.all(files.map((file) => toPayload(file)))).filter(
+    (value): value is string => typeof value === "string" && value.length > 0
+  );
+  const isVolumetric =
+    (files.length > 1 && files.every((file) => isDicomLikeFile(file))) ||
+    (files.length === 1 && isDicomArchiveFile(files[0]));
+
   if (preferredFile.url.startsWith("data:")) {
     return {
-      payload: preferredFile.url,
+      payload: payloads[0] ?? preferredFile.url,
+      payloads,
       preview: {
         dataUrl: preferredFile.url,
         mediaType: preferredFile.mediaType,
         name,
       },
+      isVolumetric,
     };
   }
 
   if (preferredFile.url.startsWith("blob:")) {
     const dataUrl = await blobUrlToDataUrl(preferredFile.url);
     return {
-      payload: dataUrl,
+      payload: payloads[0] ?? dataUrl,
+      payloads,
       preview: {
         dataUrl: dataUrl ?? undefined,
         mediaType: preferredFile.mediaType,
         name,
       },
+      isVolumetric,
     };
   }
 
   return {
-    payload: null,
+    payload: payloads[0] ?? null,
+    payloads,
     preview: {
       mediaType: preferredFile.mediaType,
       name,
     },
+    isVolumetric,
   };
 }
 
 function formatTraceForReasoning(step: AgentTraceStep): string {
+  if (step.type === "session_started") {
+    return step.tool_name ? `Session accepted for **${step.tool_name}**` : "Session accepted by backend";
+  }
+  if (step.type === "tool_execution_started") {
+    return `Starting **${step.tool_name || "tool"}**`;
+  }
+  if (step.type === "tool_progress") {
+    return step.message || `Still running **${step.tool_name || "tool"}**`;
+  }
   if (step.type === "supervisor_decision") {
     const agent = step.active_agent || "agent";
     const calls =
@@ -212,7 +263,9 @@ export function ChatWindow({ actorId, mode, patientId }: ChatWindowProps) {
     const attachmentSelection = await pickAttachmentPayload(message.files);
     void sendMessage({
       attachment: attachmentSelection.payload,
+      attachments: attachmentSelection.payloads,
       attachmentMeta: attachmentSelection.preview,
+      isVolumetric: attachmentSelection.isVolumetric,
       text: message.text,
     });
   };

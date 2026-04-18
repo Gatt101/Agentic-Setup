@@ -44,14 +44,18 @@ async def detect_body_part_impl(image_base64: str) -> dict:
     width, height = image.size
     ratio = width / max(height, 1)
 
-    if ratio >= 1.0:
+    if ratio >= 1.35:
         body_part = "hand"
         confidence = clamp(0.62 + (ratio - 1.0) * 0.2, 0.4, 0.93)
-        rationale = "Image is wider than tall, matching common hand/wrist framing."
-    else:
+        rationale = "Image is substantially wider than tall, matching common hand/wrist framing."
+    elif ratio <= 0.75:
         body_part = "leg"
         confidence = clamp(0.62 + (1.0 - ratio) * 0.2, 0.4, 0.93)
-        rationale = "Image is taller than wide, matching common leg/tibia framing."
+        rationale = "Image is substantially taller than wide, matching common leg/tibia framing."
+    else:
+        body_part = "unknown"
+        confidence = 0.45
+        rationale = "Aspect ratio is ambiguous for the current X-ray classifier."
 
     return {
         "body_part": body_part,

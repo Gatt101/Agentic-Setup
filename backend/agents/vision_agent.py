@@ -36,18 +36,37 @@ class VisionAgent(BaseAgent):
         )
 
         super().__init__(capabilities)
+        self.visual_context = {}
         self.image_analysis_history = {}
         self.quality_assessment = {}
 
+    @staticmethod
+    def _context_detections(context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        detections = context.get("detections")
+        if detections is None:
+            detections = context.get("existing_detections")
+        return detections if isinstance(detections, list) else []
+
+    @staticmethod
+    def _context_body_part(context: Dict[str, Any]) -> Optional[str]:
+        body_part = context.get("body_part")
+        if body_part is None:
+            body_part = context.get("existing_body_part")
+        return body_part if isinstance(body_part, str) and body_part else None
+
     async def perceive(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Perceive visual information and image data."""
+        existing_detections = self._context_detections(context)
         perceptions = {
             "image_data": context.get("image_data"),
             "image_quality": await self._assess_image_quality(context.get("image_data")),
-            "existing_detections": context.get("detections"),
-            "body_part": context.get("body_part"),
+            "detections": existing_detections,
+            "existing_detections": existing_detections,
+            "body_part": self._context_body_part(context),
             "session_id": context.get("session_id")
         }
+
+        self.visual_context.update(perceptions)
 
         # Store in analysis history
         session_id = context.get("session_id", "unknown")
@@ -59,7 +78,7 @@ class VisionAgent(BaseAgent):
         logger.info(
             "Vision agent perceived: quality={}, existing_detections={}, body_part={}",
             perceptions["image_quality"].get("overall_quality", "unknown"),
-            len(perceptions.get("existing_detections", [])),
+            len(existing_detections),
             perceptions.get("body_part")
         )
 
@@ -67,12 +86,14 @@ class VisionAgent(BaseAgent):
 
     async def reason(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Reason about image analysis requirements and approach."""
+        image_quality_assessment = await self._assess_image_quality(context.get("image_data"))
+        confidence_expectations = await self._estimate_confidence_expectations(context, image_quality_assessment)
         reasoning = {
             "analysis_status": self._assess_analysis_status(context),
-            "image_quality_assessment": self._assess_image_quality(context.get("image_data")),
+            "image_quality_assessment": image_quality_assessment,
             "required_analyses": self._determine_required_analyses(context),
-            "confidence_expectations": self._estimate_confidence_expectations(context),
-            "collaboration_needs": self._identify_vision_collaboration_needs(context),
+            "confidence_expectations": confidence_expectations,
+            "collaboration_needs": self._identify_vision_collaboration_needs(context, image_quality_assessment),
             "recommended_actions": []
         }
 
@@ -120,8 +141,8 @@ class VisionAgent(BaseAgent):
     def _assess_analysis_status(self, context: Dict[str, Any]) -> str:
         """Assess current analysis status."""
         image_data = context.get("image_data")
-        body_part = context.get("body_part")
-        detections = context.get("detections")
+        body_part = self._context_body_part(context)
+        detections = self._context_detections(context)
 
         if not image_data:
             return "no_image_available"
@@ -145,7 +166,7 @@ class VisionAgent(BaseAgent):
         if not image_data:
             return required
 
-        body_part = context.get("body_part")
+        body_part = self._context_body_part(context)
 
         if not body_part:
             required.append("body_part_detection")
@@ -155,19 +176,24 @@ class VisionAgent(BaseAgent):
             required.append("leg_fracture_detection")
 
         # Always consider annotation if detections exist
-        if context.get("detections"):
+        if self._context_detections(context):
             required.append("image_annotation")
 
         return required
 
-    def _estimate_confidence_expectations(self, context: Dict[str, Any]) -> Dict[str, float]:
+    async def _estimate_confidence_expectations(
+        self,
+        context: Dict[str, Any],
+        quality: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, float]:
         """Estimate expected confidence levels for different analyses."""
         expectations = {}
 
-        quality = self._assess_image_quality(context.get("image_data"))
+        if quality is None:
+            quality = await self._assess_image_quality(context.get("image_data"))
         quality_factor = quality.get("confidence_factor", 1.0)
 
-        body_part = context.get("body_part")
+        body_part = self._context_body_part(context)
 
         # Base confidence estimates adjusted by quality
         if body_part == "hand":
@@ -181,12 +207,16 @@ class VisionAgent(BaseAgent):
 
         return expectations
 
-    def _identify_vision_collaboration_needs(self, context: Dict[str, Any]) -> List[str]:
+    def _identify_vision_collaboration_needs(
+        self,
+        context: Dict[str, Any],
+        quality: Optional[Dict[str, Any]] = None,
+    ) -> List[str]:
         """Identify when vision agent needs collaboration."""
         needs = []
 
         # Need clinical input if low confidence detections
-        detections = context.get("detections", [])
+        detections = self._context_detections(context)
         if detections:
             low_confidence_detections = [
                 d for d in detections
@@ -196,7 +226,7 @@ class VisionAgent(BaseAgent):
                 needs.append("clinical_verification")
 
         # Need better quality image if quality is poor
-        quality = self._assess_image_quality(context.get("image_data"))
+        quality = quality or {"overall_quality": "unknown"}
         if quality.get("overall_quality") == "poor":
             needs.append("image_quality_improvement")
 
@@ -292,7 +322,7 @@ class VisionAgent(BaseAgent):
 
         try:
             # Prepare input
-            image_data = self.clinical_context.get("image_data")
+            image_data = self.visual_context.get("image_data")
             if not image_data:
                 return {"success": False, "error": "No image data available"}
 
@@ -300,7 +330,7 @@ class VisionAgent(BaseAgent):
             result = await vision_tool._run({"image_data": image_data})
 
             # Update confidence with quality factor
-            quality_assessment = self._assess_image_quality(image_data)
+            quality_assessment = await self._assess_image_quality(image_data)
             quality_factor = quality_assessment.get("confidence_factor", 1.0)
 
             # Adjust result confidence if provided
@@ -324,8 +354,8 @@ class VisionAgent(BaseAgent):
             "task_type": action["action_type"],
             "description": action["description"],
             "context": {
-                "detections": self.clinical_context.get("existing_detections"),
-                "image_quality": self._assess_image_quality(self.clinical_context.get("image_data"))
+                "detections": self.visual_context.get("existing_detections"),
+                "image_quality": await self._assess_image_quality(self.visual_context.get("image_data"))
             },
             "priority": action.get("priority", 2)
         }
@@ -342,8 +372,8 @@ class VisionAgent(BaseAgent):
         tasks = []
 
         # Urgent if poor image quality
-        quality = self._assess_image_quality(context.get("image_data"))
-        if quality.get("overall_quality") == "poor":
+        image_data = context.get("image_data")
+        if isinstance(image_data, str) and image_data and len(image_data) < 1000:
             tasks.append({
                 "description": "Improve image quality for analysis",
                 "objective": "Obtain higher quality medical image",

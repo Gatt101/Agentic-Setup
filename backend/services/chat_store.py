@@ -141,12 +141,21 @@ class ChatStore:
 
     async def complete_trace(self, chat_id: str, final_events: list[dict[str, Any]]) -> None:
         await self.ensure_enabled()
+        existing = await mongo_service.db.chat_traces.find_one(
+            {"chat_id": chat_id},
+            projection={"_id": 0, "events": 1},
+            sort=[("updated_at", -1)],
+        )
+        merged_events: list[dict[str, Any]] = []
+        for event in (existing or {}).get("events", []) + list(final_events or []):
+            if event not in merged_events:
+                merged_events.append(event)
         await mongo_service.db.chat_traces.update_one(
             {"chat_id": chat_id},
             {
                 "$set": {
                     "status": "completed",
-                    "events": final_events,
+                    "events": merged_events,
                     "updated_at": _now(),
                 }
             },

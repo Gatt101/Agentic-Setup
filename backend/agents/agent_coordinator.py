@@ -181,16 +181,18 @@ class MultiAgentCoordinator:
         logger.debug("Starting parallel agent reasoning...")
 
         reasoning_tasks = []
+        task_agent_names = []
         for agent_name, perception in perception_results.items():
             if agent_name in self.agents:
                 # Combine context with agent's perception
-                agent_context = {**context, "agent_perception": perception}
+                agent_context = {**context, **perception, "agent_perception": perception}
                 reasoning_tasks.append(self.agents[agent_name].reason(agent_context))
+                task_agent_names.append(agent_name)
 
         results = await asyncio.gather(*reasoning_tasks, return_exceptions=True)
 
         reasoning_results = {}
-        for agent_name, result in zip(self.agents.keys(), results):
+        for agent_name, result in zip(task_agent_names, results):
             if isinstance(result, Exception):
                 logger.error("Agent {} reasoning failed: {}", agent_name, result)
                 reasoning_results[agent_name] = {"error": str(result)}
@@ -205,16 +207,18 @@ class MultiAgentCoordinator:
         logger.debug("Starting parallel goal formulation...")
 
         goal_tasks = []
+        task_agent_names = []
         for agent_name, reasoning in reasoning_results.items():
             if agent_name in self.agents and "error" not in reasoning:
                 # Combine context with agent's reasoning
-                agent_context = {**context, "agent_reasoning": reasoning}
+                agent_context = {**context, **reasoning, "agent_reasoning": reasoning}
                 goal_tasks.append(self.agents[agent_name].formulate_goals(agent_context))
+                task_agent_names.append(agent_name)
 
         results = await asyncio.gather(*goal_tasks, return_exceptions=True)
 
         goal_formulation = {}
-        for agent_name, result in zip(self.agents.keys(), results):
+        for agent_name, result in zip(task_agent_names, results):
             if isinstance(result, Exception):
                 logger.error("Agent {} goal formulation failed: {}", agent_name, result)
                 goal_formulation[agent_name] = {"error": str(result), "goals": []}
@@ -270,7 +274,7 @@ class MultiAgentCoordinator:
             })
 
         # Check if multiple agents need to reach consensus
-        total_needs = sum(len(vision_collabs) + len(clinical_collabs))
+        total_needs = len(vision_collabs) + len(clinical_collabs)
         if total_needs > 2:
             needs.append({
                 "type": "multi_agent_consensus",

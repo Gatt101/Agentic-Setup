@@ -9,7 +9,7 @@ from loguru import logger
 
 from api.schemas.feedback import AgentFeedback, FeedbackResponse, FeedbackSummary
 from services.mongo import mongo_service
-from services.chatai_store import chat_store
+from services.chat_store import chat_store
 from services.agent_learning import adaptive_supervisor
 from services.probabilistic_reasoning import (
     confidence_estimator,

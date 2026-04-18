@@ -8,6 +8,9 @@ from tools.clinical.history import get_patient_history_impl
 from tools.clinical.multi_study import analyze_multiple_studies_impl
 from tools.clinical.symptoms import analyze_patient_symptoms_impl
 from tools.clinical.triage import assess_triage_impl
+from tools.ct.appendicular_segmentation import ct_analyze_appendicular_impl
+from tools.ct.bone_segmentation import ct_analyze_full_body_impl
+from tools.ct.spine_segmentation import ct_analyze_spine_impl
 from tools.hospital.details import get_hospital_details_impl
 from tools.hospital.emergency import get_emergency_contacts_impl
 from tools.hospital.finder import find_nearby_hospitals_impl
@@ -16,6 +19,10 @@ from tools.knowledge.condition_lookup import lookup_orthopedic_condition_impl
 from tools.knowledge.fracture_classifier import classify_fracture_type_impl
 from tools.knowledge.ortho_knowledge import get_orthopedic_knowledge_impl
 from tools.knowledge.treatment import get_treatment_recommendations_impl
+from tools.modality.detect_modality import detect_imaging_modality_impl
+from tools.modality.dicom_parser import extract_mid_slice_impl, parse_dicom_impl
+from tools.mri.knee_segmentation import mri_analyze_knee_impl
+from tools.mri.spine_segmentation import mri_analyze_spine_impl
 from tools.report.clinician_pdf import generate_clinician_pdf_impl
 from tools.report.patient_pdf import generate_patient_pdf_impl
 from tools.report.retrieve_report import retrieve_report_impl
@@ -38,11 +45,19 @@ class MCPToolRegistration:
 
 
 MCP_TOOL_REGISTRY: list[MCPToolRegistration] = [
+    MCPToolRegistration("modality_detect_imaging_modality", detect_imaging_modality_impl, "Detect imaging modality."),
+    MCPToolRegistration("modality_parse_dicom", parse_dicom_impl, "Parse DICOM metadata."),
+    MCPToolRegistration("modality_extract_mid_slice", extract_mid_slice_impl, "Extract middle slice preview from a volume."),
     MCPToolRegistration("vision_detect_body_part", detect_body_part_impl, "Detect body part from X-ray."),
     MCPToolRegistration("vision_detect_hand_fracture", detect_hand_fracture_impl, "Detect hand fractures."),
     MCPToolRegistration("vision_detect_leg_fracture", detect_leg_fracture_impl, "Detect leg fractures."),
     MCPToolRegistration("vision_annotate_xray_image", annotate_xray_image_impl, "Annotate X-ray with detections."),
     MCPToolRegistration("vision_upload_image_to_storage", upload_image_to_storage_impl, "Store source image."),
+    MCPToolRegistration("ct_analyze_full_body", ct_analyze_full_body_impl, "Segment CT bones using TotalSegmentator."),
+    MCPToolRegistration("ct_analyze_spine", ct_analyze_spine_impl, "Segment spine CT using VerSe or TotalSegmentator."),
+    MCPToolRegistration("ct_analyze_appendicular", ct_analyze_appendicular_impl, "Segment appendicular CT structures."),
+    MCPToolRegistration("mri_analyze_knee", mri_analyze_knee_impl, "Segment knee MRI structures."),
+    MCPToolRegistration("mri_analyze_spine", mri_analyze_spine_impl, "Segment spine MRI vertebrae."),
     MCPToolRegistration("clinical_generate_diagnosis", generate_diagnosis_impl, "Generate diagnosis summary."),
     MCPToolRegistration("clinical_assess_triage", assess_triage_impl, "Assess triage level."),
     MCPToolRegistration(

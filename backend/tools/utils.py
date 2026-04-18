@@ -26,3 +26,14 @@ def encode_image_base64(image: Image.Image, image_format: str = "PNG") -> str:
 
 def clamp(value: float, minimum: float, maximum: float) -> float:
     return max(minimum, min(value, maximum))
+
+
+def decode_dicom_base64(dicom_base64: str) -> bytes:
+    payload = strip_data_url(dicom_base64)
+    return base64.b64decode(payload)
+
+
+def is_dicom_data(data: bytes) -> bool:
+    if len(data) < 132:
+        return False
+    return data[128:132] == b"DICM"

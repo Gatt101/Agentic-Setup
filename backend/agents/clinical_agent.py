@@ -37,15 +37,43 @@ class ClinicalAgent(BaseAgent):
         self.clinical_context = {}
         self.patient_history = {}
 
+    @staticmethod
+    def _context_detections(context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        detections = context.get("detections")
+        if detections is None:
+            detections = context.get("existing_detections")
+        return detections if isinstance(detections, list) else []
+
+    @staticmethod
+    def _context_patient_info(context: Dict[str, Any]) -> Dict[str, Any]:
+        patient_info = context.get("patient_info")
+        return patient_info if isinstance(patient_info, dict) else {}
+
+    @staticmethod
+    def _context_triage(context: Dict[str, Any]) -> Dict[str, Any]:
+        triage = context.get("triage_result")
+        if triage is None:
+            triage = context.get("existing_triage")
+        return triage if isinstance(triage, dict) else {}
+
+    @staticmethod
+    def _context_diagnosis(context: Dict[str, Any]) -> Any:
+        diagnosis = context.get("diagnosis")
+        if diagnosis is None:
+            diagnosis = context.get("existing_diagnosis")
+        return diagnosis
+
     async def perceive(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Perceive clinical context and gather relevant information."""
+        detections = self._context_detections(context)
+        patient_info = self._context_patient_info(context)
         perceptions = {
             "image_data": context.get("image_data"),
-            "detections": context.get("detections"),
+            "detections": detections,
             "symptoms": context.get("symptoms"),
-            "patient_info": context.get("patient_info", {}),
-            "existing_diagnosis": context.get("diagnosis"),
-            "existing_triage": context.get("triage_result"),
+            "patient_info": patient_info,
+            "diagnosis": self._context_diagnosis(context),
+            "triage_result": self._context_triage(context),
             "location": context.get("location"),
             "session_id": context.get("session_id")
         }
@@ -67,7 +95,7 @@ class ClinicalAgent(BaseAgent):
 
         logger.info(
             "Clinical agent perceived context: detections={}, symptoms={}, patient={}",
-            len(perceptions.get("detections", [])),
+            len(detections),
             bool(perceptions.get("symptoms")),
             patient_id
         )
@@ -99,9 +127,9 @@ class ClinicalAgent(BaseAgent):
 
     def _assess_clinical_situation(self, context: Dict[str, Any]) -> str:
         """Assess overall clinical situation."""
-        detections = context.get("detections")
-        diagnosis = context.get("diagnosis")
-        triage = context.get("triage_result")
+        detections = self._context_detections(context)
+        diagnosis = self._context_diagnosis(context)
+        triage = self._context_triage(context)
         symptoms = context.get("symptoms")
 
         if not detections and not symptoms:
@@ -121,13 +149,13 @@ class ClinicalAgent(BaseAgent):
     def _assess_information_completeness(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Assess completeness of available clinical information."""
         completeness = {
-            "detections_available": bool(context.get("detections")),
+            "detections_available": bool(self._context_detections(context)),
             "symptoms_available": bool(context.get("symptoms")),
             "patient_info_complete": False,
             "overall_score": 0.0
         }
 
-        patient_info = context.get("patient_info", {})
+        patient_info = self._context_patient_info(context)
         completeness["patient_info_complete"] = all([
             patient_info.get("name"),
             patient_info.get("age"),
@@ -152,13 +180,13 @@ class ClinicalAgent(BaseAgent):
         }
 
         # Check for urgent indicators
-        symptoms = context.get("symptoms", "").lower()
+        symptoms = str(context.get("symptoms") or "").lower()
         if any(urgent in symptoms for urgent in ["severe", "emergency", "acute pain", "bleeding"]):
             priority["level"] = "urgent"
             priority["factors"].append("severe_symptoms")
 
         # Check existing triage level
-        triage = context.get("triage_result", {})
+        triage = self._context_triage(context)
         triage_level = triage.get("level", "").upper()
         if triage_level == "RED":
             priority["level"] = "urgent"
@@ -168,7 +196,7 @@ class ClinicalAgent(BaseAgent):
             priority["factors"].append("amber_triage")
 
         # Check detection severity
-        detections = context.get("detections", [])
+        detections = self._context_detections(context)
         if detections:
             for detection in detections:
                 severity = detection.get("severity", "").lower()
@@ -183,8 +211,8 @@ class ClinicalAgent(BaseAgent):
         """Generate clinical hypotheses based on available data."""
         hypotheses = []
 
-        detections = context.get("detections", [])
-        symptoms = context.get("symptoms", "")
+        detections = self._context_detections(context)
+        symptoms = str(context.get("symptoms") or "")
 
         # Generate hypotheses from detections
         if detections:
@@ -214,13 +242,14 @@ class ClinicalAgent(BaseAgent):
     def _identify_collaboration_needs(self, context: Dict[str, Any]) -> List[str]:
         """Identify when collaboration with other agents is beneficial."""
         needs = []
+        detections = self._context_detections(context)
 
         # Need vision analysis if no detections
-        if not context.get("detections") and context.get("image_data"):
+        if not detections and context.get("image_data"):
             needs.append("vision_analysis")
 
         # Need knowledge base for complex cases
-        if context.get("detections") and len(context["detections"]) > 2:
+        if len(detections) > 2:
             needs.append("knowledge_base_query")
 
         # Need hospital info for urgent cases
@@ -310,7 +339,7 @@ class ClinicalAgent(BaseAgent):
                 return {"success": False, "error": "Diagnosis tool not found"}
 
             # Prepare input
-            detections = self.clinical_context.get("detections", [])
+            detections = self._context_detections(self.clinical_context)
             if not detections:
                 return {"success": False, "error": "No detections available for diagnosis"}
 
@@ -341,7 +370,7 @@ class ClinicalAgent(BaseAgent):
                 return {"success": False, "error": "Triage tool not found"}
 
             # Prepare input
-            diagnosis = self.clinical_context.get("diagnosis", {})
+            diagnosis = self._context_diagnosis(self.clinical_context)
             if not diagnosis:
                 return {"success": False, "error": "No diagnosis available for triage"}
 
