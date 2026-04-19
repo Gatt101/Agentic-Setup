@@ -3,31 +3,176 @@
 import { useState, useEffect } from "react";
 import { Brain, Users, TrendingUp, Activity } from "lucide-react";
 
+interface AgentDetail {
+  status: string;
+  active_goals: number;
+  completed_goals: number;
+  message_queue_length: number;
+  current_tasks: number;
+}
+
 interface MultiAgentStatus {
-    coordination_id?: string;
-    agents_involved: string[];
-    consensus_reached: boolean;
-    confidence: number;
-    coordination_time: number;
-    total_agents: number;
-    active_goals: number;
+  coordination_id?: string;
+  agents_involved: string[];
+  consensus_reached: boolean;
+  confidence: number;
+  coordination_time: number;
+  total_agents: number;
+  active_goals: number;
+  agent_details: Record<string, AgentDetail>;
 }
 
 interface AgentGoal {
-    goal_id: string;
-    description: string;
-    priority: string;
-    status: string;
-    progress: number;
+  goal_id: string;
+  description: string;
+  priority: string;
+  status: string;
+  progress: number;
+  agent: string;
 }
 
 interface ConsensusHistory {
-    consensus_id: string;
-    participants: string[];
-    consensus_reached: boolean;
-    confidence: number;
-    timestamp: string;
+  consensus_id: string;
+  topic: string;
+  participants: string[];
+  participant_count: number;
+  consensus_reached: boolean;
+  confidence: number;
+  timestamp: string;
 }
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const asNumber = (value: unknown, fallback = 0): number =>
+  typeof value === "number" && Number.isFinite(value) ? value : fallback;
+
+const asString = (value: unknown, fallback = ""): string =>
+  typeof value === "string" ? value : fallback;
+
+const parseAgentDetail = (value: unknown): AgentDetail => {
+  if (!isRecord(value)) {
+    return {
+      status: "unknown",
+      active_goals: 0,
+      completed_goals: 0,
+      message_queue_length: 0,
+      current_tasks: 0
+    };
+  }
+
+  return {
+    status: asString(value.status, "unknown"),
+    active_goals: asNumber(value.active_goals),
+    completed_goals: asNumber(value.completed_goals),
+    message_queue_length: asNumber(value.message_queue_length),
+    current_tasks: asNumber(value.current_tasks)
+  };
+};
+
+const parseMultiAgentStatus = (value: unknown): MultiAgentStatus | null => {
+  if (!isRecord(value)) return null;
+
+  const rawAgentDetails = isRecord(value.agent_details) ? value.agent_details : {};
+  const agentDetails: Record<string, AgentDetail> = Object.fromEntries(
+    Object.entries(rawAgentDetails).map(([agentName, details]) => [agentName, parseAgentDetail(details)])
+  );
+
+  const statistics = isRecord(value.statistics) ? value.statistics : undefined;
+  const coordinationMetrics =
+    statistics && isRecord(statistics.coordination_metrics)
+      ? statistics.coordination_metrics
+      : undefined;
+
+  const successfulConsensus = asNumber(coordinationMetrics?.successful_consensus);
+  const totalCollaborations = asNumber(coordinationMetrics?.total_collaborations);
+  const confidenceFromMetrics =
+    totalCollaborations > 0 ? successfulConsensus / totalCollaborations : 0;
+
+  const agentsInvolved =
+    Array.isArray(value.agents_involved)
+      ? value.agents_involved.filter((agent): agent is string => typeof agent === "string")
+      : Object.keys(agentDetails);
+
+  return {
+    coordination_id:
+      typeof value.coordination_id === "string" ? value.coordination_id : undefined,
+    agents_involved: agentsInvolved,
+    consensus_reached:
+      typeof value.consensus_reached === "boolean"
+        ? value.consensus_reached
+        : successfulConsensus > 0,
+    confidence: asNumber(value.confidence, confidenceFromMetrics),
+    coordination_time: asNumber(
+      value.coordination_time,
+      asNumber(coordinationMetrics?.average_consensus_time)
+    ),
+    total_agents: asNumber(
+      value.total_agents,
+      asNumber(statistics?.total_agents, agentsInvolved.length)
+    ),
+    active_goals: asNumber(
+      value.active_goals,
+      Object.values(agentDetails).reduce((sum, details) => sum + details.active_goals, 0)
+    ),
+    agent_details: agentDetails
+  };
+};
+
+const parseAgentGoals = (value: unknown): AgentGoal[] => {
+  if (!isRecord(value) || !isRecord(value.all_agent_goals)) {
+    return [];
+  }
+
+  const goalsByAgent = value.all_agent_goals;
+  const flattenedGoals: AgentGoal[] = [];
+
+  for (const [agentName, agentGoals] of Object.entries(goalsByAgent)) {
+    if (!Array.isArray(agentGoals)) continue;
+
+    agentGoals.forEach((goal, index) => {
+      if (!isRecord(goal)) return;
+
+      flattenedGoals.push({
+        goal_id: asString(goal.goal_id, `${agentName}-${index}`),
+        description: asString(goal.description, "Untitled goal"),
+        priority: asString(goal.priority, "medium"),
+        status: asString(goal.status, "pending"),
+        progress: asNumber(goal.progress),
+        agent: agentName
+      });
+    });
+  }
+
+  return flattenedGoals;
+};
+
+const parseConsensusHistory = (value: unknown): ConsensusHistory[] => {
+  if (!isRecord(value) || !Array.isArray(value.consensus_history)) {
+    return [];
+  }
+
+  return value.consensus_history.flatMap((entry, index) => {
+    if (!isRecord(entry)) return [];
+
+    const participants = Array.isArray(entry.participants)
+      ? entry.participants.filter((participant): participant is string => typeof participant === "string")
+      : [];
+
+    return [
+      {
+        consensus_id: asString(entry.consensus_id, `consensus-${index}`),
+        topic: asString(entry.topic, "Untitled consensus"),
+        participants,
+        participant_count: asNumber(entry.participant_count, participants.length),
+        consensus_reached:
+          typeof entry.consensus_reached === "boolean" ? entry.consensus_reached : false,
+        confidence: asNumber(entry.confidence),
+        timestamp: asString(entry.timestamp, "")
+      }
+    ];
+  });
+};
 
 export default function MultiAgentInsights({ sessionId }: { sessionId: string }) {
   const [status, setStatus] = useState<MultiAgentStatus | null>(null);
@@ -57,8 +202,11 @@ export default function MultiAgentInsights({ sessionId }: { sessionId: string })
     try {
       const response = await fetch(`${API_BASE_URL}/multi_agent/status`);
       if (response.ok) {
-        const data = await response.json();
-        setStatus(data);
+        const data: unknown = await response.json();
+        const parsedStatus = parseMultiAgentStatus(data);
+        if (parsedStatus) {
+          setStatus(parsedStatus);
+        }
       }
     } catch (error) {
       console.error("Failed to fetch multi-agent status:", error);
@@ -71,21 +219,8 @@ export default function MultiAgentInsights({ sessionId }: { sessionId: string })
     try {
       const response = await fetch(`${API_BASE_URL}/multi_agent/goals`);
       if (response.ok) {
-        const data = await response.json();
-        // Flatten goals from all agents
-        const allGoals = data.all_agent_goals || {};
-        const flattenedGoals: AgentGoal[] = [];
-
-        Object.entries(allGoals).forEach(([agentName, agentGoals]) => {
-          agentGoals.forEach((goal: any) => {
-            flattenedGoals.push({
-              ...goal,
-              agent: agentName
-            });
-          });
-        });
-
-        setGoals(flattenedGoals);
+        const data: unknown = await response.json();
+        setGoals(parseAgentGoals(data));
       }
     } catch (error) {
       console.error("Failed to fetch agent goals:", error);
@@ -96,8 +231,8 @@ export default function MultiAgentInsights({ sessionId }: { sessionId: string })
     try {
       const response = await fetch(`${API_BASE_URL}/multi_agent/consensus/history?limit=10`);
       if (response.ok) {
-        const data = await response.json();
-        setConsensusHistory(data.consensus_history || []);
+        const data: unknown = await response.json();
+        setConsensusHistory(parseConsensusHistory(data));
       }
     } catch (error) {
       console.error("Failed to fetch consensus history:", error);
@@ -202,8 +337,7 @@ export default function MultiAgentInsights({ sessionId }: { sessionId: string })
             <div className="border-t pt-4">
               <h3 className="text-lg font-semibold text-gray-900 mb-3">Agent Details</h3>
               <div className="space-y-3">
-                {status.agent_details &&
-                  Object.entries(status.agent_details).map(([agentName, details]: [string, any]) => (
+                {Object.entries(status.agent_details).map(([agentName, details]) => (
                     <div key={agentName} className="bg-white border rounded-lg p-4">
                       <div className="flex items-center gap-2 mb-2">
                         <div className="p-2 bg-indigo-100 rounded-lg">

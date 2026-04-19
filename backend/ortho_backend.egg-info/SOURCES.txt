@@ -56,6 +56,7 @@ services/probabilistic_reasoning.py
 services/rag_store.py
 services/session.py
 services/storage.py
+tests/test_dicom_utils.py
 tools/__init__.py
 tools/utils.py
 tools/clinical/__init__.py
@@ -70,6 +71,7 @@ tools/ct/bone_segmentation.py
 tools/ct/ct_runtime.py
 tools/ct/ct_utils.py
 tools/ct/spine_segmentation.py
+tools/ct/totalsegmentator_worker.py
 tools/hospital/__init__.py
 tools/hospital/data.py
 tools/hospital/details.py

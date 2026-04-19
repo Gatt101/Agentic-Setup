@@ -1,4 +1,5 @@
 import { getDoctorReports } from "@/lib/data/loaders";
+import { DATA_MODE_QUERY_PARAM, resolveDataSourceMode } from "@/lib/data/mode";
 import { auth } from "@clerk/nextjs/server";
 
 const severityClassName: Record<"AMBER" | "GREEN" | "RED", string> = {
@@ -9,9 +10,17 @@ const severityClassName: Record<"AMBER" | "GREEN" | "RED", string> = {
   RED: "border-rose-300 bg-rose-50 text-rose-800 dark:border-rose-600 dark:bg-rose-900/30 dark:text-rose-200",
 };
 
-export default async function DoctorReportsPage() {
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
+
+export default async function DoctorReportsPage({
+  searchParams,
+}: {
+  searchParams?: SearchParams;
+}) {
+  const params = searchParams ? await searchParams : {};
+  const mode = resolveDataSourceMode(params[DATA_MODE_QUERY_PARAM]);
   const { userId } = await auth();
-  const reports = await getDoctorReports(userId ?? undefined);
+  const reports = await getDoctorReports(userId ?? undefined, { mode });
 
   return (
     <main className="space-y-4 p-6">

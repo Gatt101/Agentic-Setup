@@ -1111,7 +1111,7 @@ async def chat_with_agent(request: ChatRequest) -> AgentResponse:
     return await chat_in_session(chat_id, bridged)
 
 
-@router.get("/patients")
+@router.get("/chat/patients")
 async def list_patients(
     actor_id: str = Query(...),
     actor_role: str = Query(...),

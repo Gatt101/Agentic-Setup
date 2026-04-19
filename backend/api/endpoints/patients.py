@@ -55,9 +55,9 @@ async def list_patients(
 
     try:
         if role == "doctor":
-            raw = await patient_store.list_by_doctor(actor_id)
+            raw = await patient_store.list_by_doctor(actor_id, include_analyses=True)
         else:
-            raw = await patient_store.list_by_patient_user(actor_id)
+            raw = await patient_store.list_by_patient_user(actor_id, include_analyses=True)
     except RuntimeError as exc:
         logger.warning("patients list: MongoDB not available — {}", exc)
         return []

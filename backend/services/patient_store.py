@@ -161,22 +161,40 @@ class PatientStore:
             {"patient_id": patient_id}, {"_id": 0}
         )
 
-    async def list_by_doctor(self, doctor_user_id: str) -> list[dict[str, Any]]:
+    async def list_by_doctor(
+        self,
+        doctor_user_id: str,
+        *,
+        include_analyses: bool = False,
+    ) -> list[dict[str, Any]]:
         await self.ensure_enabled()
+        projection: dict[str, int] = {"_id": 0}
+        if not include_analyses:
+            projection["analyses"] = 0
         cursor = (
             mongo_service.db.patients.find(
-                {"doctor_user_id": doctor_user_id}, {"_id": 0, "analyses": 0}
+                {"doctor_user_id": doctor_user_id},
+                projection,
             )
             .sort("updated_at", -1)
             .limit(200)
         )
         return [row async for row in cursor]
 
-    async def list_by_patient_user(self, patient_user_id: str) -> list[dict[str, Any]]:
+    async def list_by_patient_user(
+        self,
+        patient_user_id: str,
+        *,
+        include_analyses: bool = False,
+    ) -> list[dict[str, Any]]:
         await self.ensure_enabled()
+        projection: dict[str, int] = {"_id": 0}
+        if not include_analyses:
+            projection["analyses"] = 0
         cursor = (
             mongo_service.db.patients.find(
-                {"patient_user_id": patient_user_id}, {"_id": 0, "analyses": 0}
+                {"patient_user_id": patient_user_id},
+                projection,
             )
             .sort("updated_at", -1)
             .limit(200)

@@ -1,10 +1,19 @@
 import { DoctorPatientsPanel } from "@/components/patients/DoctorPatientsPanel";
 import { getDoctorPatients } from "@/lib/data/loaders";
+import { DATA_MODE_QUERY_PARAM, resolveDataSourceMode } from "@/lib/data/mode";
 import { auth } from "@clerk/nextjs/server";
 
-export default async function DoctorPatientsPage() {
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
+
+export default async function DoctorPatientsPage({
+  searchParams,
+}: {
+  searchParams?: SearchParams;
+}) {
+  const params = searchParams ? await searchParams : {};
+  const mode = resolveDataSourceMode(params[DATA_MODE_QUERY_PARAM]);
   const { userId } = await auth();
-  const patients = await getDoctorPatients(userId ?? undefined);
+  const patients = await getDoctorPatients(userId ?? undefined, { mode });
 
   return (
     <main className="space-y-4 p-6">

@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/sidebar";
 import orthoIconS from "@/icons/ortho_icon_s.png";
 import type { AppRole } from "@/lib/constants";
+import { DATA_MODE_QUERY_PARAM } from "@/lib/data/mode";
 import { cn } from "@/lib/utils";
 
 type SidebarProps = {
@@ -120,8 +121,20 @@ export function AppSidebar({ role, userId }: SidebarProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const activeChatId = searchParams.get("chat_id");
+  const activeDataMode = searchParams.get(DATA_MODE_QUERY_PARAM);
   const links = role === "doctor" ? doctorLinks : patientLinks;
   const chatBaseHref = role === "doctor" ? "/dashboard/doctor/chat" : "/dashboard/patient/chat";
+
+  const withDataMode = (href: string) => {
+    if (!activeDataMode) {
+      return href;
+    }
+    const [path, query = ""] = href.split("?");
+    const params = new URLSearchParams(query);
+    params.set(DATA_MODE_QUERY_PARAM, activeDataMode);
+    const serialized = params.toString();
+    return serialized ? `${path}?${serialized}` : path;
+  };
 
   useEffect(() => {
     const loadSessions = async () => {
@@ -166,6 +179,7 @@ export function AppSidebar({ role, userId }: SidebarProps) {
                 key={link.href}
                 link={{
                   ...link,
+                  href: withDataMode(link.href),
                   icon: React.cloneElement(
                     link.icon as React.ReactElement<{ className?: string }>,
                     {
@@ -193,7 +207,9 @@ export function AppSidebar({ role, userId }: SidebarProps) {
                 </p>
                 <div className="mt-1 max-h-48 overflow-y-auto space-y-1 pr-1 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
                   {chatSessions.map((session) => {
-                    const href = `${chatBaseHref}?chat_id=${encodeURIComponent(session.chat_id)}`;
+                    const href = withDataMode(
+                      `${chatBaseHref}?chat_id=${encodeURIComponent(session.chat_id)}`
+                    );
                     const isActive = activeChatId === session.chat_id;
                     return (
                       <SidebarLink

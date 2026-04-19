@@ -6,24 +6,65 @@ import {
     patientReportsMockData,
 } from "@/lib/mock-data/reports";
 
-import { DATA_SOURCE_MODE, USE_MOCK_DATA } from "./mode";
+import {
+  DATA_SOURCE_MODE,
+  getDataSourceLabelForMode,
+  type DataSourceMode,
+} from "./mode";
 import type {
     DoctorDashboardData,
+    DashboardMetric,
+    MonthlyCasePoint,
+    TurnaroundPoint,
+    TriageDistributionPoint,
     NearbyCareCenter,
     PatientRecord,
     ReportRecord,
 } from "./types";
 
-type MetricsResponse = {
-  active_sessions: number;
-  stored_reports: number;
-};
+type DoctorDashboardApiResponse = Partial<DoctorDashboardData>;
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api";
 
+type DataLoaderOptions = {
+  mode?: DataSourceMode;
+};
+
 function cloneData<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
+}
+
+function emptyDoctorDashboardData(base: DoctorDashboardData): DoctorDashboardData {
+  return {
+    summary: base.summary.map((item) => ({
+      ...item,
+      value: item.label === "Avg Turnaround" ? "0.0h" : "0",
+      change: "Live data unavailable",
+    })),
+    monthlyCases: base.monthlyCases.map((item) => ({
+      ...item,
+      total: 0,
+      critical: 0,
+    })),
+    triageDistribution: base.triageDistribution.map((item) => ({
+      ...item,
+      count: 0,
+    })),
+    reportTurnaround: base.reportTurnaround.map((item) => ({
+      ...item,
+      avgHours: 0,
+    })),
+    alerts: ["Live mode is enabled but dashboard data is currently unavailable."],
+  };
+}
+
+function resolveMode(options?: DataLoaderOptions): DataSourceMode {
+  return options?.mode ?? DATA_SOURCE_MODE;
+}
+
+function shouldUseMockData(options?: DataLoaderOptions): boolean {
+  return resolveMode(options) === "mock";
 }
 
 async function fetchApi<T>(path: string): Promise<T> {
@@ -38,37 +79,81 @@ async function fetchApi<T>(path: string): Promise<T> {
   return (await response.json()) as T;
 }
 
-export function getDataSourceLabel(): string {
-  return DATA_SOURCE_MODE.toUpperCase();
+export function getDataSourceLabel(options?: DataLoaderOptions): string {
+  return getDataSourceLabelForMode(resolveMode(options));
 }
 
-export async function getDoctorDashboardData(): Promise<DoctorDashboardData> {
+export async function getDoctorDashboardData(
+  actorId?: string,
+  options?: DataLoaderOptions
+): Promise<DoctorDashboardData> {
   const base = cloneData(doctorDashboardMockData);
 
-  if (USE_MOCK_DATA) {
+  if (shouldUseMockData(options) || !actorId) {
     return base;
   }
 
   try {
-    const metrics = await fetchApi<MetricsResponse>("/metrics");
-    base.summary = base.summary.map((item) => {
-      if (item.label === "Cases Reviewed") {
-        return { ...item, value: String(Math.max(metrics.active_sessions, 0)) };
-      }
-      if (item.label === "Reports In Progress") {
-        return { ...item, value: String(Math.max(metrics.stored_reports, 0)) };
-      }
-      return item;
-    });
-    return base;
+    const params = new URLSearchParams({ actor_id: actorId, actor_role: "doctor" });
+    const live = await fetchApi<DoctorDashboardApiResponse>(
+      `/dashboard/doctor/overview?${params}`
+    );
+
+    const summary: DashboardMetric[] = Array.isArray(live.summary)
+      ? live.summary.map((item, index) => ({
+          label: String(item?.label ?? base.summary[index]?.label ?? "Metric"),
+          value: String(item?.value ?? base.summary[index]?.value ?? "0"),
+          change: String(item?.change ?? base.summary[index]?.change ?? ""),
+        }))
+      : base.summary;
+
+    const monthlyCases: MonthlyCasePoint[] = Array.isArray(live.monthlyCases)
+      ? live.monthlyCases.map((item, index) => ({
+          month: String(item?.month ?? base.monthlyCases[index]?.month ?? `M${index + 1}`),
+          total: Number(item?.total ?? base.monthlyCases[index]?.total ?? 0),
+          critical: Number(item?.critical ?? base.monthlyCases[index]?.critical ?? 0),
+        }))
+      : base.monthlyCases;
+
+    const triageDistribution: TriageDistributionPoint[] = Array.isArray(live.triageDistribution)
+      ? live.triageDistribution.map((item, index) => ({
+          level: (["RED", "AMBER", "GREEN"].includes(String(item?.level))
+            ? item?.level
+            : base.triageDistribution[index]?.level ?? "GREEN") as TriageDistributionPoint["level"],
+          count: Number(item?.count ?? base.triageDistribution[index]?.count ?? 0),
+          color: String(item?.color ?? base.triageDistribution[index]?.color ?? "#6b8b73"),
+        }))
+      : base.triageDistribution;
+
+    const reportTurnaround: TurnaroundPoint[] = Array.isArray(live.reportTurnaround)
+      ? live.reportTurnaround.map((item, index) => ({
+          week: String(item?.week ?? base.reportTurnaround[index]?.week ?? `W${index + 1}`),
+          avgHours: Number(item?.avgHours ?? base.reportTurnaround[index]?.avgHours ?? 0),
+        }))
+      : base.reportTurnaround;
+
+    const alerts = Array.isArray(live.alerts)
+      ? live.alerts.map((item) => String(item))
+      : base.alerts;
+
+    return {
+      summary,
+      monthlyCases,
+      triageDistribution,
+      reportTurnaround,
+      alerts,
+    };
   } catch {
-    return base;
+    return emptyDoctorDashboardData(base);
   }
 }
 
-export async function getDoctorPatients(actorId?: string): Promise<PatientRecord[]> {
-  // Always keep mock data wired; switch to real data by setting NEXT_PUBLIC_DATA_SOURCE=api
-  if (USE_MOCK_DATA || !actorId) {
+export async function getDoctorPatients(
+  actorId?: string,
+  options?: DataLoaderOptions
+): Promise<PatientRecord[]> {
+  // Mock mode serves fixtures; live mode reads backend and returns [] on failure.
+  if (shouldUseMockData(options) || !actorId) {
     return cloneData(doctorPatientsMockData);
   }
 
@@ -84,14 +169,16 @@ export async function getDoctorPatients(actorId?: string): Promise<PatientRecord
       summary: String(p.summary ?? ""),
     }));
   } catch {
-    // fallback to mock on API error so the UI never breaks
-    return cloneData(doctorPatientsMockData);
+    return [];
   }
 }
 
-export async function getDoctorReports(actorId?: string): Promise<ReportRecord[]> {
-  // Always keep mock data wired; switch to real data by setting NEXT_PUBLIC_DATA_SOURCE=api
-  if (USE_MOCK_DATA || !actorId) {
+export async function getDoctorReports(
+  actorId?: string,
+  options?: DataLoaderOptions
+): Promise<ReportRecord[]> {
+  // Mock mode serves fixtures; live mode reads backend and returns [] on failure.
+  if (shouldUseMockData(options) || !actorId) {
     return cloneData(doctorReportsMockData);
   }
 
@@ -108,13 +195,16 @@ export async function getDoctorReports(actorId?: string): Promise<ReportRecord[]
       createdAt: String(r.createdAt ?? new Date().toISOString()),
     }));
   } catch {
-    return cloneData(doctorReportsMockData);
+    return [];
   }
 }
 
-export async function getPatientReports(actorId?: string): Promise<ReportRecord[]> {
-  // Always keep mock data wired; switch to real data by setting NEXT_PUBLIC_DATA_SOURCE=api
-  if (USE_MOCK_DATA || !actorId) {
+export async function getPatientReports(
+  actorId?: string,
+  options?: DataLoaderOptions
+): Promise<ReportRecord[]> {
+  // Mock mode serves fixtures; live mode reads backend and returns [] on failure.
+  if (shouldUseMockData(options) || !actorId) {
     return cloneData(patientReportsMockData);
   }
 
@@ -131,7 +221,7 @@ export async function getPatientReports(actorId?: string): Promise<ReportRecord[
       createdAt: String(r.createdAt ?? new Date().toISOString()),
     }));
   } catch {
-    return cloneData(patientReportsMockData);
+    return [];
   }
 }
 

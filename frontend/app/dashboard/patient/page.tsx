@@ -1,7 +1,18 @@
 import { getPatientReports } from "@/lib/data/loaders";
+import { DATA_MODE_QUERY_PARAM, resolveDataSourceMode } from "@/lib/data/mode";
+import { auth } from "@clerk/nextjs/server";
 
-export default async function PatientHomePage() {
-  const reports = await getPatientReports();
+type SearchParams = Promise<Record<string, string | string[] | undefined>>;
+
+export default async function PatientHomePage({
+  searchParams,
+}: {
+  searchParams?: SearchParams;
+}) {
+  const params = searchParams ? await searchParams : {};
+  const mode = resolveDataSourceMode(params[DATA_MODE_QUERY_PARAM]);
+  const { userId } = await auth();
+  const reports = await getPatientReports(userId ?? undefined, { mode });
 
   const latestReport = reports[0];
 
