@@ -3,14 +3,39 @@
 import { useState, useEffect } from "react";
 import { Brain, Users, TrendingUp, Activity } from "lucide-react";
 
+interface AgentDetails {
+  status: string;
+  active_goals: number;
+  completed_goals: number;
+  current_tasks: number;
+  message_queue_length: number;
+}
+
+interface CoordinationMetrics {
+  average_consensus_time: number;
+  total_collaborations: number;
+  successful_consensus: number;
+  failed_consensus: number;
+}
+
+interface CoordinationStatistics {
+  coordination_metrics: CoordinationMetrics;
+  total_agents: number;
+  recent_consensus_success: number;
+}
+
 interface MultiAgentStatus {
-    coordination_id?: string;
-    agents_involved: string[];
-    consensus_reached: boolean;
-    confidence: number;
-    coordination_time: number;
-    total_agents: number;
-    active_goals: number;
+  coordinator_status: string;
+  timestamp: string;
+  statistics?: CoordinationStatistics;
+  agent_details?: Record<string, AgentDetails>;
+  coordination_id?: string;
+  agents_involved?: string[];
+  consensus_reached?: boolean;
+  confidence?: number;
+  coordination_time?: number;
+  total_agents?: number;
+  active_goals?: number;
 }
 
 interface AgentGoal {
@@ -19,6 +44,7 @@ interface AgentGoal {
     priority: string;
     status: string;
     progress: number;
+  agent?: string;
 }
 
 interface ConsensusHistory {
@@ -27,6 +53,8 @@ interface ConsensusHistory {
     consensus_reached: boolean;
     confidence: number;
     timestamp: string;
+  topic: string;
+  participant_count: number;
 }
 
 export default function MultiAgentInsights({ sessionId }: { sessionId: string }) {
@@ -52,6 +80,19 @@ export default function MultiAgentInsights({ sessionId }: { sessionId: string })
   }, [sessionId]);
 
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api";
+  const activeAgentDetails = status?.agent_details ?? {};
+  const stats = status?.statistics;
+  const agentsInvolvedCount = status?.agents_involved?.length ?? Object.keys(activeAgentDetails).length;
+  const consensusRate = status?.confidence ?? (
+    stats && stats.coordination_metrics.total_collaborations > 0
+      ? stats.coordination_metrics.successful_consensus / stats.coordination_metrics.total_collaborations
+      : 0
+  );
+  const coordinationTime = status?.coordination_time ?? stats?.coordination_metrics.average_consensus_time ?? 0;
+  const activeGoalsCount = status?.active_goals ?? Object.values(activeAgentDetails).reduce(
+    (total, details) => total + details.active_goals,
+    0
+  );
 
   async function fetchMultiAgentStatus() {
     try {
@@ -77,7 +118,7 @@ export default function MultiAgentInsights({ sessionId }: { sessionId: string })
         const flattenedGoals: AgentGoal[] = [];
 
         Object.entries(allGoals).forEach(([agentName, agentGoals]) => {
-          agentGoals.forEach((goal: any) => {
+          (agentGoals as AgentGoal[]).forEach((goal) => {
             flattenedGoals.push({
               ...goal,
               agent: agentName
@@ -172,28 +213,28 @@ export default function MultiAgentInsights({ sessionId }: { sessionId: string })
               <div className="bg-gray-50 rounded-lg p-4">
                 <div className="text-sm text-gray-600 mb-1">Agents Involved</div>
                 <div className="text-2xl font-bold text-gray-900">
-                  {status.agents_involved?.length || 0}
+                  {agentsInvolvedCount}
                 </div>
               </div>
 
               <div className="bg-gray-50 rounded-lg p-4">
                 <div className="text-sm text-gray-600 mb-1">Consensus Rate</div>
-                <div className={`text-2xl font-bold ${getConfidenceColor(status.confidence)}`}>
-                  {((status.confidence || 0) * 100).toFixed(0)}%
+                <div className={`text-2xl font-bold ${getConfidenceColor(consensusRate)}`}>
+                  {(consensusRate * 100).toFixed(0)}%
                 </div>
               </div>
 
               <div className="bg-gray-50 rounded-lg p-4">
                 <div className="text-sm text-gray-600 mb-1">Coordination Time</div>
                 <div className="text-2xl font-bold text-gray-900">
-                  {status.coordination_time?.toFixed(2) || 0}s
+                  {coordinationTime.toFixed(2)}s
                 </div>
               </div>
 
               <div className="bg-gray-50 rounded-lg p-4">
                 <div className="text-sm text-gray-600 mb-1">Active Goals</div>
                 <div className="text-2xl font-bold text-gray-900">
-                  {status.active_goals || 0}
+                  {activeGoalsCount}
                 </div>
               </div>
             </div>
@@ -202,8 +243,7 @@ export default function MultiAgentInsights({ sessionId }: { sessionId: string })
             <div className="border-t pt-4">
               <h3 className="text-lg font-semibold text-gray-900 mb-3">Agent Details</h3>
               <div className="space-y-3">
-                {status.agent_details &&
-                  Object.entries(status.agent_details).map(([agentName, details]: [string, any]) => (
+                {Object.entries(activeAgentDetails).map(([agentName, details]) => (
                     <div key={agentName} className="bg-white border rounded-lg p-4">
                       <div className="flex items-center gap-2 mb-2">
                         <div className="p-2 bg-indigo-100 rounded-lg">
@@ -246,8 +286,7 @@ export default function MultiAgentInsights({ sessionId }: { sessionId: string })
                         </div>
                       </div>
                     </div>
-                  ))
-                }
+                  ))}
               </div>
             </div>
           </div>
