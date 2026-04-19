@@ -109,14 +109,22 @@ function deriveChatTitle(text: string): string {
   return cleaned.length > 70 ? `${cleaned.slice(0, 70).trimEnd()}...` : cleaned;
 }
 
+function isImageAttachmentUrl(value: string): boolean {
+  if (value.startsWith("data:image/")) {
+    return true;
+  }
+  return /(?:^\/storage\/|^https?:\/\/).+\.(png|jpe?g|webp|gif|bmp|svg)(?:[?#].*)?$/i.test(value);
+}
+
 function toChatMessage(record: ChatMessageRecord): ChatMessage {
   const sender = record.sender_role === "assistant" ? "assistant" : "user";
   let attachment: ChatAttachment | undefined;
 
   if (sender === "user" && record.attachment_data_url) {
+    const isImage = isImageAttachmentUrl(record.attachment_data_url);
     attachment = {
       dataUrl: record.attachment_data_url,
-      mediaType: record.attachment_data_url.startsWith("data:image/") ? "image/png" : undefined,
+      mediaType: isImage ? "image/*" : undefined,
       name: "Uploaded attachment",
     };
   }
