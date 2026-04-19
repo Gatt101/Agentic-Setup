@@ -1,7 +1,7 @@
 "use client";
 
-import { Activity, Brain, TrendingUp, Users } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState, useEffect } from "react";
+import { Brain, Users, TrendingUp, Activity } from "lucide-react";
 
 interface AgentDetail {
   status: string;
@@ -11,30 +11,46 @@ interface AgentDetail {
   current_tasks: number;
 }
 
+interface CoordinationMetrics {
+  successful_consensus: number;
+  total_collaborations: number;
+  average_consensus_time: number;
+}
+
+interface MultiAgentStatistics {
+  total_agents: number;
+  coordination_metrics: CoordinationMetrics;
+}
+
 interface MultiAgentStatus {
-    coordination_id?: string;
-    agents_involved: string[];
-    consensus_reached: boolean;
-    confidence: number;
-    coordination_time: number;
-    total_agents: number;
-    active_goals: number;
+  coordination_id?: string;
+  agents_involved: string[];
+  consensus_reached: boolean;
+  confidence: number;
+  coordination_time: number;
+  total_agents: number;
+  active_goals: number;
+  agent_details: Record<string, AgentDetail>;
+  statistics?: MultiAgentStatistics;
 }
 
 interface AgentGoal {
-    goal_id: string;
-    description: string;
-    priority: string;
-    status: string;
-    progress: number;
+  goal_id: string;
+  description: string;
+  priority: string;
+  status: string;
+  progress: number;
+  agent: string;
 }
 
 interface ConsensusHistory {
-    consensus_id: string;
-    participants: string[];
-    consensus_reached: boolean;
-    confidence: number;
-    timestamp: string;
+  consensus_id: string;
+  topic: string;
+  participants: string[];
+  participant_count: number;
+  consensus_reached: boolean;
+  confidence: number;
+  timestamp: string;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -111,7 +127,18 @@ const parseMultiAgentStatus = (value: unknown): MultiAgentStatus | null => {
       value.active_goals,
       Object.values(agentDetails).reduce((sum, details) => sum + details.active_goals, 0)
     ),
-    agent_details: agentDetails
+    agent_details: agentDetails,
+    statistics: {
+      total_agents: asNumber(
+        statistics?.total_agents,
+        agentsInvolved.length
+      ),
+      coordination_metrics: {
+        successful_consensus: successfulConsensus,
+        total_collaborations: totalCollaborations,
+        average_consensus_time: asNumber(coordinationMetrics?.average_consensus_time)
+      }
+    }
   };
 };
 
@@ -228,21 +255,8 @@ export default function MultiAgentInsights({ sessionId }: { sessionId: string })
     try {
       const response = await fetch(`${API_BASE_URL}/multi_agent/goals`);
       if (response.ok) {
-        const data = await response.json();
-        // Flatten goals from all agents
-        const allGoals = data.all_agent_goals || {};
-        const flattenedGoals: AgentGoal[] = [];
-
-        Object.entries(allGoals).forEach(([agentName, agentGoals]) => {
-          agentGoals.forEach((goal: any) => {
-            flattenedGoals.push({
-              ...goal,
-              agent: agentName
-            });
-          });
-        });
-
-        setGoals(flattenedGoals);
+        const data: unknown = await response.json();
+        setGoals(parseAgentGoals(data));
       }
     } catch (error) {
       console.error("Failed to fetch agent goals:", error);
@@ -359,8 +373,7 @@ export default function MultiAgentInsights({ sessionId }: { sessionId: string })
             <div className="border-t pt-4">
               <h3 className="text-lg font-semibold text-gray-900 mb-3">Agent Details</h3>
               <div className="space-y-3">
-                {status.agent_details &&
-                  Object.entries(status.agent_details).map(([agentName, details]: [string, any]) => (
+                {Object.entries(status.agent_details).map(([agentName, details]) => (
                     <div key={agentName} className="bg-white border rounded-lg p-4">
                       <div className="flex items-center gap-2 mb-2">
                         <div className="p-2 bg-indigo-100 rounded-lg">
@@ -551,3 +564,4 @@ export default function MultiAgentInsights({ sessionId }: { sessionId: string })
     </div>
   );
 }
+
