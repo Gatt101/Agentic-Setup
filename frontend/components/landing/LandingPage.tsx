@@ -2,7 +2,6 @@
 
 import { SignInButton, SignUpButton } from "@clerk/nextjs";
 import { motion, useReducedMotion } from "framer-motion";
-import { Manrope } from "next/font/google";
 import Link from "next/link";
 
 import { AppResizableNavbar } from "@/components/layout/AppResizableNavbar";
@@ -12,11 +11,6 @@ import { BoneIcon } from "@/icons/BoneIcon";
 import { HospitalIcon } from "@/icons/HospitalIcon";
 import { ReportIcon } from "@/icons/ReportIcon";
 import { XrayIcon } from "@/icons/XrayIcon";
-
-const bodyFont = Manrope({
-  subsets: ["latin"],
-  weight: ["400", "500", "600", "700"],
-});
 
 type IconComponent = () => JSX.Element;
 
@@ -376,7 +370,7 @@ export function LandingPage() {
 
   return (
     <main
-      className={`${bodyFont.className} relative overflow-hidden bg-[radial-gradient(circle_at_10%_10%,rgba(79,93,149,0.12),transparent_34%),radial-gradient(circle_at_90%_15%,rgba(107,139,115,0.16),transparent_34%),#f7f8f8] pb-24 dark:bg-[radial-gradient(circle_at_10%_10%,rgba(143,162,255,0.16),transparent_34%),radial-gradient(circle_at_90%_15%,rgba(152,182,162,0.18),transparent_34%),#050913]`}
+      className="relative overflow-hidden bg-[radial-gradient(circle_at_10%_10%,rgba(79,93,149,0.12),transparent_34%),radial-gradient(circle_at_90%_15%,rgba(107,139,115,0.16),transparent_34%),#f7f8f8] pb-24 dark:bg-[radial-gradient(circle_at_10%_10%,rgba(143,162,255,0.16),transparent_34%),radial-gradient(circle_at_90%_15%,rgba(152,182,162,0.18),transparent_34%),#050913]"
     >
       <AppResizableNavbar />
       <div

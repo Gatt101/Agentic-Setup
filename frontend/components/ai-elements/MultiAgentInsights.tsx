@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { Brain, Users, TrendingUp, Activity } from "lucide-react";
+import { Activity, Brain, TrendingUp, Users } from "lucide-react";
+import { useEffect, useState } from "react";
 
 interface AgentDetail {
   status: string;
@@ -12,33 +12,29 @@ interface AgentDetail {
 }
 
 interface MultiAgentStatus {
-  coordination_id?: string;
-  agents_involved: string[];
-  consensus_reached: boolean;
-  confidence: number;
-  coordination_time: number;
-  total_agents: number;
-  active_goals: number;
-  agent_details: Record<string, AgentDetail>;
+    coordination_id?: string;
+    agents_involved: string[];
+    consensus_reached: boolean;
+    confidence: number;
+    coordination_time: number;
+    total_agents: number;
+    active_goals: number;
 }
 
 interface AgentGoal {
-  goal_id: string;
-  description: string;
-  priority: string;
-  status: string;
-  progress: number;
-  agent: string;
+    goal_id: string;
+    description: string;
+    priority: string;
+    status: string;
+    progress: number;
 }
 
 interface ConsensusHistory {
-  consensus_id: string;
-  topic: string;
-  participants: string[];
-  participant_count: number;
-  consensus_reached: boolean;
-  confidence: number;
-  timestamp: string;
+    consensus_id: string;
+    participants: string[];
+    consensus_reached: boolean;
+    confidence: number;
+    timestamp: string;
 }
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -197,6 +193,19 @@ export default function MultiAgentInsights({ sessionId }: { sessionId: string })
   }, [sessionId]);
 
   const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000/api";
+  const activeAgentDetails = status?.agent_details ?? {};
+  const stats = status?.statistics;
+  const agentsInvolvedCount = status?.agents_involved?.length ?? Object.keys(activeAgentDetails).length;
+  const consensusRate = status?.confidence ?? (
+    stats && stats.coordination_metrics.total_collaborations > 0
+      ? stats.coordination_metrics.successful_consensus / stats.coordination_metrics.total_collaborations
+      : 0
+  );
+  const coordinationTime = status?.coordination_time ?? stats?.coordination_metrics.average_consensus_time ?? 0;
+  const activeGoalsCount = status?.active_goals ?? Object.values(activeAgentDetails).reduce(
+    (total, details) => total + details.active_goals,
+    0
+  );
 
   async function fetchMultiAgentStatus() {
     try {
@@ -219,8 +228,21 @@ export default function MultiAgentInsights({ sessionId }: { sessionId: string })
     try {
       const response = await fetch(`${API_BASE_URL}/multi_agent/goals`);
       if (response.ok) {
-        const data: unknown = await response.json();
-        setGoals(parseAgentGoals(data));
+        const data = await response.json();
+        // Flatten goals from all agents
+        const allGoals = data.all_agent_goals || {};
+        const flattenedGoals: AgentGoal[] = [];
+
+        Object.entries(allGoals).forEach(([agentName, agentGoals]) => {
+          agentGoals.forEach((goal: any) => {
+            flattenedGoals.push({
+              ...goal,
+              agent: agentName
+            });
+          });
+        });
+
+        setGoals(flattenedGoals);
       }
     } catch (error) {
       console.error("Failed to fetch agent goals:", error);
@@ -307,28 +329,28 @@ export default function MultiAgentInsights({ sessionId }: { sessionId: string })
               <div className="bg-gray-50 rounded-lg p-4">
                 <div className="text-sm text-gray-600 mb-1">Agents Involved</div>
                 <div className="text-2xl font-bold text-gray-900">
-                  {status.agents_involved?.length || 0}
+                  {agentsInvolvedCount}
                 </div>
               </div>
 
               <div className="bg-gray-50 rounded-lg p-4">
                 <div className="text-sm text-gray-600 mb-1">Consensus Rate</div>
-                <div className={`text-2xl font-bold ${getConfidenceColor(status.confidence)}`}>
-                  {((status.confidence || 0) * 100).toFixed(0)}%
+                <div className={`text-2xl font-bold ${getConfidenceColor(consensusRate)}`}>
+                  {(consensusRate * 100).toFixed(0)}%
                 </div>
               </div>
 
               <div className="bg-gray-50 rounded-lg p-4">
                 <div className="text-sm text-gray-600 mb-1">Coordination Time</div>
                 <div className="text-2xl font-bold text-gray-900">
-                  {status.coordination_time?.toFixed(2) || 0}s
+                  {coordinationTime.toFixed(2)}s
                 </div>
               </div>
 
               <div className="bg-gray-50 rounded-lg p-4">
                 <div className="text-sm text-gray-600 mb-1">Active Goals</div>
                 <div className="text-2xl font-bold text-gray-900">
-                  {status.active_goals || 0}
+                  {activeGoalsCount}
                 </div>
               </div>
             </div>
@@ -337,7 +359,8 @@ export default function MultiAgentInsights({ sessionId }: { sessionId: string })
             <div className="border-t pt-4">
               <h3 className="text-lg font-semibold text-gray-900 mb-3">Agent Details</h3>
               <div className="space-y-3">
-                {Object.entries(status.agent_details).map(([agentName, details]) => (
+                {status.agent_details &&
+                  Object.entries(status.agent_details).map(([agentName, details]: [string, any]) => (
                     <div key={agentName} className="bg-white border rounded-lg p-4">
                       <div className="flex items-center gap-2 mb-2">
                         <div className="p-2 bg-indigo-100 rounded-lg">
@@ -380,8 +403,7 @@ export default function MultiAgentInsights({ sessionId }: { sessionId: string })
                         </div>
                       </div>
                     </div>
-                  ))
-                }
+                  ))}
               </div>
             </div>
           </div>

@@ -5,8 +5,10 @@ import inspect
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -100,32 +102,76 @@ def _predict_ct_sync(
             fast,
             roi_subset or [],
         )
+        logger.info("TotalSegmentator worker command: {}", worker_cmd)
 
-        completed = __import__("subprocess").run(
+        process = subprocess.Popen(
             worker_cmd,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
-            timeout=1800,
+            bufsize=1,
             cwd=str(Path(__file__).resolve().parents[2]),
             env={**os.environ},
         )
+        logger.info("TotalSegmentator worker started with pid={}", process.pid)
 
-        stdout = (completed.stdout or "").strip()
-        stderr = (completed.stderr or "").strip()
-        if completed.returncode != 0:
-            error_message = f"TotalSegmentator worker exited with code {completed.returncode}"
-            if stdout:
+        deadline = time.monotonic() + 1800
+        last_progress_log = time.monotonic()
+        output_lines: list[str] = []
+
+        while True:
+            now = time.monotonic()
+            if now >= deadline:
+                process.kill()
+                raise TimeoutError("TotalSegmentator worker timed out after 1800 seconds")
+
+            line = process.stdout.readline() if process.stdout else ""
+            if line:
+                text_line = line.rstrip()
+                output_lines.append(text_line)
+                logger.info("TotalSegmentator worker | {}", text_line)
+                last_progress_log = now
+                continue
+
+            return_code = process.poll()
+            if return_code is not None:
+                break
+
+            if now - last_progress_log >= 30:
+                logger.info(
+                    "TotalSegmentator worker pid={} still running for {:.0f}s",
+                    process.pid,
+                    now - (deadline - 1800),
+                )
+                last_progress_log = now
+            time.sleep(1)
+
+        if process.stdout:
+            remaining = process.stdout.read()
+            if remaining:
+                for line in remaining.splitlines():
+                    text_line = line.rstrip()
+                    output_lines.append(text_line)
+                    logger.info("TotalSegmentator worker | {}", text_line)
+
+        if process.returncode != 0:
+            error_message = f"TotalSegmentator worker exited with code {process.returncode}"
+            if output_lines:
                 try:
-                    payload = json.loads(stdout.splitlines()[-1])
+                    payload = json.loads(output_lines[-1])
                     if isinstance(payload, dict) and payload.get("error"):
                         error_message = str(payload["error"])
                 except json.JSONDecodeError:
-                    error_message = f"{error_message}. {stdout[-500:]}"
-            elif stderr:
-                error_message = f"{error_message}. {stderr[-500:]}"
+                    error_message = f"{error_message}. {output_lines[-1][-500:]}"
             logger.error("TotalSegmentator inference failed: {}", error_message)
             shutil.rmtree(output_dir, ignore_errors=True)
             return {"error": error_message, "findings": [], "summary": {}}
+
+        logger.info(
+            "TotalSegmentator worker completed successfully: pid={} output_dir={}",
+            process.pid,
+            output_dir,
+        )
 
         return {"output_dir": output_dir}
     except Exception as exc:

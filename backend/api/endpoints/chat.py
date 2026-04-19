@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import mimetypes
 import re
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -19,6 +21,7 @@ from core.exceptions import AgentExecutionError
 from services.chat_store import chat_store
 from services.mongo import mongo_service
 from services.patient_store import patient_store
+from services.storage import storage_service
 from tools.modality.dicom_utils import (
     dicom_bytes_to_image_data_url,
     dicom_bytes_to_nifti_file,
@@ -98,6 +101,72 @@ def _classify_attachment(attachment: str | None) -> str:
 def _decode_base64_payload(payload: str) -> bytes:
     body = payload.split(",", 1)[1] if payload.strip().startswith("data:") and "," in payload else payload
     return base64.b64decode(body)
+
+
+def _infer_attachment_suffix(attachment: str, attachment_kind: str, payload: bytes) -> str:
+    if attachment.strip().startswith("data:") and "," in attachment:
+        header = attachment.split(",", 1)[0]
+        mime_type = header[5:].split(";", 1)[0].strip().lower()
+        guessed = mimetypes.guess_extension(mime_type)
+        if guessed:
+            return ".jpg" if guessed == ".jpe" else guessed
+
+    if payload.startswith(b"%PDF"):
+        return ".pdf"
+    if payload.startswith(b"PK"):
+        return ".zip" if attachment_kind == "dicom" else ".bin"
+    if attachment_kind == "image":
+        return ".png"
+    if attachment_kind == "dicom":
+        return ".dcm"
+    return ".bin"
+
+
+async def _persist_attachment_for_history(chat_id: str, attachment: str | None) -> str | None:
+    if not attachment or not attachment.strip():
+        return None
+    if attachment.startswith("/storage/") or re.match(r"^https?://", attachment):
+        return attachment
+
+    attachment_kind = _classify_attachment(attachment)
+    try:
+        payload = _decode_base64_payload(attachment)
+    except Exception:
+        return attachment
+
+    suffix = _infer_attachment_suffix(attachment, attachment_kind, payload)
+    saved = await storage_service.save_bytes(
+        payload,
+        filename=f"chat_{chat_id}_{uuid4().hex}{suffix}",
+        subdir="chat_attachments",
+    )
+    return saved["public_url"]
+
+
+def _load_storage_attachment_as_data_url(attachment_url: str) -> str | None:
+    prefix = "/storage/"
+    if not attachment_url.startswith(prefix):
+        return None
+
+    relative_path = attachment_url[len(prefix):].strip("/")
+    if not relative_path:
+        return None
+
+    storage_root = settings.resolved_storage_path.resolve()
+    file_path = (storage_root / Path(relative_path)).resolve()
+    try:
+        file_path.relative_to(storage_root)
+    except ValueError:
+        return None
+    if not file_path.is_file():
+        return None
+
+    mime_type, _ = mimetypes.guess_type(file_path.name)
+    if not mime_type or not mime_type.startswith("image/"):
+        return None
+
+    encoded = base64.b64encode(file_path.read_bytes()).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"
 
 
 def _normalize_attachments(request: ChatRequest) -> list[str]:
@@ -257,6 +326,11 @@ def _extract_latest_image_data(history: list[dict]) -> str | None:
             continue
         candidate = item.get("attachment_data_url")
         if not isinstance(candidate, str) or not candidate.strip():
+            continue
+        if candidate.startswith("/storage/"):
+            restored = _load_storage_attachment_as_data_url(candidate)
+            if restored:
+                return restored
             continue
         if _classify_attachment(candidate) != "image":
             continue
@@ -686,12 +760,13 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
         )
 
     user_message_id = str(uuid4())
+    persisted_attachment = await _persist_attachment_for_history(chat_id, attachment)
     await chat_store.append_message(
         chat_id=chat_id,
         message_id=user_message_id,
         sender_role="user",
         content=request.message,
-        attachment_data_url=attachment,
+        attachment_data_url=persisted_attachment,
     )
 
     if attachment_error_message:

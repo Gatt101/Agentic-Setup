@@ -23,7 +23,7 @@ def main() -> int:
     try:
         from totalsegmentator.python_api import totalsegmentator
     except ImportError:
-        print(json.dumps({"error": "TotalSegmentator not installed"}))
+        print(json.dumps({"error": "TotalSegmentator not installed"}), flush=True)
         return 2
 
     try:
@@ -40,10 +40,10 @@ def main() -> int:
         totalsegmentator(**kwargs)
     except Exception as exc:
         shutil.rmtree(args.output_path, ignore_errors=True)
-        print(json.dumps({"error": str(exc)}))
+        print(json.dumps({"error": str(exc)}), flush=True)
         return 1
 
-    print(json.dumps({"output_dir": args.output_path}))
+    print(json.dumps({"output_dir": args.output_path}), flush=True)
     return 0
 
 
