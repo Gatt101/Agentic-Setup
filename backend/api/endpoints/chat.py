@@ -33,6 +33,7 @@ from tools.modality.dicom_utils import (
     read_dicom_metadata,
 )
 from tools.report.clinician_simple_pdf import generate_clinician_simple_pdf_impl
+from tools.report.comprehensive_pdf import generate_comprehensive_pdf_impl
 from tools.report.patient_pdf import generate_patient_pdf_impl
 from tools.utils import decode_image_base64, strip_data_url
 from tools.vision.annotator import annotate_xray_image_impl
@@ -356,16 +357,26 @@ def _extract_patient_info(history: list[dict], current_message: str, patient_id:
     name_match = re.search(
         r"\b(?:(?:my|patient)\s+)?(?:full\s*name|name)\s*(?:(?:[:=\-])|\bis\b)?\s*"
         r"([A-Za-z][A-Za-z\s\.\'-]{1,60}?)"
-        r"(?=\s*(?:,|\n|age\b|aged\b|ge[nm]de?r?\b|doctor\b|give\b|gen\b|pdf\b|$))",
+        r"(?=\s*(?:,|\n|age\b|aged\b|\d+\s*-\s*year|ge[nm]de?r?\b|doctor\b|give\b|gen\b|pdf\b|$))",
         merged_text,
         flags=re.IGNORECASE,
     )
-    # Accept: "age: 33", "age = 33", "age 33", "age is 33"
+    # Fallback: "Patient: Margaret Chen, ..." — bare "Patient:" colon intro
+    if not name_match:
+        name_match = re.search(
+            r"(?:^|\n)\s*patient\s*:\s*([A-Za-z][A-Za-z\s\.\'-]{1,60}?)"
+            r"(?=\s*(?:,|\n|age\b|aged\b|\d+\s*-\s*year|ge[nm]de?r?\b|$))",
+            merged_text,
+            flags=re.IGNORECASE,
+        )
+    # Accept: "age: 33", "age = 33", "age 33", "age is 33", "33-year-old", "33 year old"
     age_match = re.search(
         r"\b(?:age|aged)\s*(?:(?:[:=\-])|\bis\b)?\s*(\d{1,3})\b",
         merged_text,
         flags=re.IGNORECASE,
     )
+    if not age_match:
+        age_match = re.search(r"\b(\d{1,3})\s*-?\s*year[s]?\s*-?\s*old\b", merged_text, flags=re.IGNORECASE)
     # Accept: "gender: male", "gender = male", "gender: m", "gender is male", "gemder = male"
     gender_match = re.search(
         r"\bge[nm]de?r?\s*(?:(?:[:=\-])|\bis\b)?\s*(male|female|other|non-binary|nonbinary|m|f)\b",
@@ -512,6 +523,10 @@ async def _ensure_report(
     image_base64: str | None,
     detections: list[dict] | None,
     annotated_image_base64: str | None,
+    treatment_plan: dict | None = None,
+    rehabilitation_plan: dict | None = None,
+    patient_education: dict | None = None,
+    appointment_schedule: dict | None = None,
 ) -> tuple[str | None, str | None]:
     if not report_requested:
         return None, None
@@ -527,39 +542,34 @@ async def _ensure_report(
         )
 
     try:
-        if actor_role == "doctor":
-            payload = await generate_clinician_simple_pdf_impl(
-                diagnosis=diagnosis,
-                triage=triage,
-                metadata={
-                    "patient_id": str(patient_info.get("patient_id") or "unknown"),
-                    "body_part": str(patient_info.get("body_part") or ""),
-                    "doctor_name": str(patient_info.get("doctor") or ""),
-                    "patient_name": str(patient_info.get("name") or ""),
-                    "patient_age": str(patient_info.get("age") or ""),
-                    "patient_gender": str(patient_info.get("gender") or ""),
-                },
-                recommendations=[
-                    str(triage.get("recommended_timeframe") or "Follow clinical protocol for this triage level."),
-                    "Review the annotated image alongside the patient history.",
-                ],
-                image_base64=image_base64,
-                detections=detections,
-                annotated_image_base64=annotated_image_base64,
-            )
-        else:
-            payload = await generate_patient_pdf_impl(
-                diagnosis=diagnosis,
-                triage=triage,
-                patient_info=patient_info,
-                recommendations=[
-                    str(triage.get("recommended_timeframe") or "Follow clinician guidance promptly."),
-                    "Bring this report and annotated image for in-person review.",
-                ],
-                image_base64=image_base64,
-                detections=detections,
-                annotated_image_base64=annotated_image_base64,
-            )
+        recs = [
+            str(triage.get("recommended_timeframe") or "Follow clinical protocol for this triage level."),
+            "Review the annotated image alongside the patient history.",
+        ]
+        payload = await generate_comprehensive_pdf_impl(
+            diagnosis=diagnosis,
+            triage=triage,
+            patient_info=patient_info,
+            actor_role=actor_role,
+            image_base64=image_base64,
+            annotated_image_base64=annotated_image_base64,
+            detections=detections,
+            recommendations=recs,
+            metadata={
+                "patient_id":     str(patient_info.get("patient_id") or "unknown"),
+                "patient_name":   str(patient_info.get("name")   or ""),
+                "patient_age":    str(patient_info.get("age")    or ""),
+                "patient_gender": str(patient_info.get("gender") or ""),
+                "doctor_name":    str(patient_info.get("doctor") or ""),
+                "body_part":      str(patient_info.get("body_part") or ""),
+            },
+            treatment_plan=treatment_plan,
+            rehabilitation_plan=rehabilitation_plan,
+            patient_education=patient_education,
+            appointment_schedule=appointment_schedule,
+        )
+        if payload.get("error"):
+            return None, str(payload["error"])
         generated_url = payload.get("pdf_url")
         if isinstance(generated_url, str) and generated_url:
             return generated_url, None
@@ -1076,6 +1086,10 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
             image_base64=image_data,
             detections=result.get("detections") if isinstance(result.get("detections"), list) else None,
             annotated_image_base64=annotated_image_base64,
+            treatment_plan=result.get("treatment_plan") if isinstance(result.get("treatment_plan"), dict) else None,
+            rehabilitation_plan=result.get("rehabilitation_plan") if isinstance(result.get("rehabilitation_plan"), dict) else None,
+            patient_education=result.get("patient_education") if isinstance(result.get("patient_education"), dict) else None,
+            appointment_schedule=result.get("appointment_schedule") if isinstance(result.get("appointment_schedule"), dict) else None,
         )
         if fallback_url:
             report_url = fallback_url

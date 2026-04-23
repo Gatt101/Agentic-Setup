@@ -41,6 +41,13 @@ class AgentState(TypedDict, total=False):
     multi_agent_enabled: bool | None
     tool_execution_outcomes: list[dict[str, Any]] | None
 
+    # Care-plan agent outputs (populated by care_plan_node after diagnosis+triage are ready)
+    treatment_plan: dict[str, Any] | None
+    rehabilitation_plan: dict[str, Any] | None
+    patient_education: dict[str, Any] | None
+    appointment_schedule: dict[str, Any] | None
+    care_plan_generated: bool | None
+
     # LangGraph internals
     messages: Annotated[list[BaseMessage], add_messages]
     tool_calls_made: list[str]
@@ -76,6 +83,11 @@ def base_state() -> AgentState:
         "multi_agent_coordination": None,
         "multi_agent_enabled": False,
         "tool_execution_outcomes": None,
+        "treatment_plan": None,
+        "rehabilitation_plan": None,
+        "patient_education": None,
+        "appointment_schedule": None,
+        "care_plan_generated": False,
         "messages": [],
         "tool_calls_made": [],
         "agent_trace": [],

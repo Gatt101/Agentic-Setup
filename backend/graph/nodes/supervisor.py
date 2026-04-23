@@ -3,6 +3,7 @@ from __future__ import annotations
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from loguru import logger
 
+from core.config import settings
 from graph.state import AgentState
 from services.groq_llm import get_supervisor_llm
 from services.chat_store import chat_store
@@ -291,6 +292,11 @@ def _multi_agent_recommendation(state: AgentState) -> dict | None:
     confidence = float(recommendation.get("confidence") or 0.0)
 
     if not tool_name or confidence < settings.multi_agent_confidence_threshold:
+        return None
+
+    # Don't re-recommend a tool that already ran this session
+    if tool_name in (state.get("tool_calls_made") or []):
+        logger.debug("Multi-agent recommendation skipped — {} already ran", tool_name)
         return None
 
     validated = _autonomous_safety_gate(state, {"name": tool_name, "args": {}})
@@ -606,8 +612,8 @@ async def supervisor_node(state: AgentState) -> dict:
             context_parts.append("=== SPECIALIST AGENT PERCEPTIONS ===\n")
             for agent_name, perceptions in multi_agent_insights["agent_perceptions"].items():
                 context_parts.append(
-                    f"{agent_name.upper()}: {len(perceptions.get('detections', []))} detections, "
-                    f"quality={perceptions.get('image_quality', {}).get('overall_quality', 'unknown')}"
+                    f"{agent_name.upper()}: {len(perceptions.get('detections') or [])} detections, "
+                    f"quality={perceptions.get('image_quality', {}).get('overall_quality', 'unknown') if isinstance(perceptions.get('image_quality'), dict) else 'unknown'}"
                 )
 
         # 3. Collaborative opportunities

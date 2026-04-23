@@ -201,6 +201,112 @@ async def response_builder_node(state: AgentState) -> dict:
         if not _report_requested(state) and not report_url:
             lines += ["", "📄 *To generate a PDF report, just ask: \"Generate a report\".*"]
 
+        # ── Care-plan agent outputs ──────────────────────────────────────────
+        actor_role = str(state.get("actor_role") or "").lower()
+        treatment_plan    = state.get("treatment_plan")
+        rehabilitation_plan = state.get("rehabilitation_plan")
+        patient_education = state.get("patient_education")
+        appointment_schedule = state.get("appointment_schedule")
+
+        is_doctor = actor_role == "doctor"
+        is_patient = actor_role == "patient"
+
+        # Treatment plan — doctors only
+        if treatment_plan and (is_doctor or not is_patient):
+            approach = str(treatment_plan.get("approach", "conservative")).capitalize()
+            lines += ["", f"---", f"## 💊 Treatment Plan — {approach} Pathway"]
+            for step in treatment_plan.get("immediate_steps", []):
+                lines.append(f"- {step}")
+            long_term = treatment_plan.get("long_term_plan", [])
+            if long_term:
+                lines += ["", "**Long-term:**"]
+                for item in long_term:
+                    lines.append(f"- {item}")
+            meds = treatment_plan.get("medications", [])
+            if meds:
+                lines += ["", "**Medications:**"]
+                for m in meds:
+                    lines.append(f"- {m}")
+            restrictions = treatment_plan.get("restrictions", [])
+            if restrictions:
+                lines += ["", "**Restrictions:**"]
+                for r in restrictions:
+                    lines.append(f"- {r}")
+
+        # Rehabilitation plan — doctors only
+        if rehabilitation_plan and (is_doctor or not is_patient):
+            summary = rehabilitation_plan.get("summary", "")
+            recovery_weeks = rehabilitation_plan.get("estimated_recovery_weeks", "")
+            physio_freq = rehabilitation_plan.get("physiotherapy_frequency", "")
+            lines += ["", "---", "## 🏃 Rehabilitation Plan"]
+            if summary:
+                lines.append(f"*{summary}*")
+            if recovery_weeks:
+                lines.append(f"**Estimated Recovery:** {recovery_weeks} weeks  |  **Physio:** {physio_freq}")
+            phases = rehabilitation_plan.get("rehabilitation_phases", {})
+            for phase_key in ("phase_1", "phase_2", "phase_3", "phase_4"):
+                phase = phases.get(phase_key)
+                if not phase:
+                    continue
+                lines.append(f"\n**Phase — Week {phase['weeks']}: {phase['label']}**")
+                for act in phase.get("activities", []):
+                    lines.append(f"  - {act}")
+            precautions = rehabilitation_plan.get("special_precautions", [])
+            if precautions:
+                lines += ["", "**Precautions:**"]
+                for p in precautions:
+                    lines.append(f"- {p}")
+
+        # Patient education — patients only
+        if patient_education and (is_patient or not is_doctor):
+            plain_summary = patient_education.get("plain_summary", "")
+            age_note = patient_education.get("age_specific_note", "")
+            lines += ["", "---", "## 📋 What This Means For You"]
+            if plain_summary:
+                lines.append(plain_summary)
+            if age_note:
+                lines += ["", f"*{age_note}*"]
+            do_not = patient_education.get("do_not_list", [])
+            if do_not:
+                lines += ["", "**Important — Do NOT:**"]
+                for item in do_not:
+                    lines.append(f"- {item}")
+            warnings = patient_education.get("warning_signs", [])
+            if warnings:
+                lines += ["", "**Seek urgent help if you notice:**"]
+                for w in warnings:
+                    lines.append(f"- {w}")
+            reassurance = patient_education.get("reassurance", "")
+            if reassurance:
+                lines += ["", f"✅ {reassurance}"]
+
+        # Appointment schedule — everyone
+        if appointment_schedule:
+            initial = appointment_schedule.get("initial_review", {})
+            days = initial.get("days_from_now", "")
+            note = initial.get("note", "")
+            specialist = appointment_schedule.get("specialist_referral", "")
+            physio_start = appointment_schedule.get("physiotherapy_start", "")
+            milestones = appointment_schedule.get("follow_up_milestones", [])
+            age_adj = appointment_schedule.get("age_specific_adjustment", "")
+            lines += ["", "---", "## 📅 Follow-up Schedule"]
+            if days:
+                lines.append(f"**Next appointment in:** {days} day(s) — {note}")
+            if specialist:
+                lines.append(f"**Specialist referral:** {specialist}")
+            if physio_start:
+                lines.append(f"**Physiotherapy:** {physio_start}")
+            if milestones:
+                lines += ["", "**Milestones:**"]
+                for m in milestones:
+                    lines.append(f"- Week {m['week']}: {m['visit']}")
+            if age_adj:
+                lines += ["", f"⚠️ {age_adj}"]
+            general = appointment_schedule.get("general_advice", "")
+            if general:
+                lines += ["", f"*{general}*"]
+        # ────────────────────────────────────────────────────────────────────
+
         return {"final_response": "\n".join(lines)}
 
     # Fallback: use the last non-tool LLM message (e.g. for knowledge/text-only answers)

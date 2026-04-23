@@ -11,6 +11,11 @@ from loguru import logger
 from agents.base_agent import BaseAgent, AgentMessage, AgentGoal
 from agents.clinical_agent import ClinicalAgent
 from agents.vision_agent import VisionAgent
+from agents.treatment_planner_agent import TreatmentPlannerAgent
+from agents.rehabilitation_agent import RehabilitationAgent
+from agents.patient_education_agent import PatientEducationAgent
+from agents.appointment_agent import AppointmentAgent
+from agents.pdf_agent import PDFGenerationAgent
 
 
 @dataclass
@@ -82,19 +87,21 @@ class MultiAgentCoordinator:
         # Lazy initialization: create agents on first use if not exists
         if not self._agents_initialized:
             logger.info("Initializing agents for first use...")
-            from agents.clinical_agent import ClinicalAgent
-            from agents.vision_agent import VisionAgent
 
-            # Create and register specialized agents
-            clinical_agent = ClinicalAgent()
-            vision_agent = VisionAgent()
-
-            self.agents[clinical_agent.capabilities.agent_name] = clinical_agent
-            self.agents[vision_agent.capabilities.agent_name] = vision_agent
+            for agent_instance in [
+                ClinicalAgent(),
+                VisionAgent(),
+                TreatmentPlannerAgent(),
+                RehabilitationAgent(),
+                PatientEducationAgent(),
+                AppointmentAgent(),
+                PDFGenerationAgent(),
+            ]:
+                self.agents[agent_instance.capabilities.agent_name] = agent_instance
 
             self._agents_initialized = True
             logger.info(
-                "Multi-agent agents initialized: {}",
+                "Multi-agent system initialized: {}",
                 list(self.agents.keys())
             )
 

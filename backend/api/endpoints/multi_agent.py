@@ -6,6 +6,8 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException, Query
 from loguru import logger
 
+import asyncio
+
 from agents.agent_coordinator import agent_coordinator
 from agents.base_agent import BaseAgent, AgentGoal
 
@@ -352,3 +354,127 @@ async def simulate_collaborative_case(
     except Exception as e:
         logger.error("Collaborative case simulation failed: {}", e)
         raise HTTPException(status_code=500, detail=f"Collaborative case simulation failed: {str(e)}")
+
+
+@router.post("/multi_agent/care_plan")
+async def generate_care_plan(context: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Generate a complete care plan using all four specialist agents in parallel.
+
+    Runs TreatmentPlannerAgent, RehabilitationAgent, PatientEducationAgent, and
+    AppointmentAgent concurrently after receiving diagnosis, triage, and patient context.
+
+    Expected body fields:
+      - diagnosis        : dict  (finding, severity, confidence) or plain string
+      - triage_result    : dict  (level: RED/AMBER/GREEN)
+      - patient_info     : dict  (age, name, gender)
+      - body_part        : str   optional
+      - session_id       : str   optional
+    """
+    try:
+        logger.info("Generating care plan for session {}", context.get("session_id", "unknown"))
+
+        # Ensure agents are initialised
+        if not agent_coordinator._agents_initialized:
+            await agent_coordinator.coordinate_analysis({"session_id": "init"})
+
+        treatment_agent = agent_coordinator.agents.get("treatment_planner_agent")
+        rehab_agent = agent_coordinator.agents.get("rehabilitation_agent")
+        education_agent = agent_coordinator.agents.get("patient_education_agent")
+        appointment_agent = agent_coordinator.agents.get("appointment_agent")
+
+        missing = [
+            name for name, ag in {
+                "treatment_planner_agent": treatment_agent,
+                "rehabilitation_agent": rehab_agent,
+                "patient_education_agent": education_agent,
+                "appointment_agent": appointment_agent,
+            }.items() if ag is None
+        ]
+        if missing:
+            raise HTTPException(status_code=503, detail=f"Agents not available: {missing}")
+
+        # Phase 1 — parallel perception
+        perception_results = await asyncio.gather(
+            treatment_agent.perceive(context),
+            rehab_agent.perceive(context),
+            education_agent.perceive(context),
+            appointment_agent.perceive(context),
+        )
+
+        # Phase 2 — parallel reasoning
+        reasoning_results = await asyncio.gather(
+            treatment_agent.reason({**context, **perception_results[0]}),
+            rehab_agent.reason({**context, **perception_results[1]}),
+            education_agent.reason({**context, **perception_results[2]}),
+            appointment_agent.reason({**context, **perception_results[3]}),
+        )
+
+        # Phase 3 — parallel action execution
+        def _first_action(reasoning: Dict[str, Any]) -> Dict[str, Any]:
+            actions = reasoning.get("recommended_actions", [])
+            return actions[0] if actions else {}
+
+        execution_results = await asyncio.gather(
+            treatment_agent.act(_first_action(reasoning_results[0])),
+            rehab_agent.act(_first_action(reasoning_results[1])),
+            education_agent.act(_first_action(reasoning_results[2])),
+            appointment_agent.act(_first_action(reasoning_results[3])),
+        )
+
+        treatment_result, rehab_result, education_result, appointment_result = execution_results
+
+        # Surface top-level keys for easy consumption
+        care_plan = {
+            "session_id": context.get("session_id"),
+            "generated_at": datetime.now().isoformat(),
+            "agents_involved": [
+                "treatment_planner_agent",
+                "rehabilitation_agent",
+                "patient_education_agent",
+                "appointment_agent",
+            ],
+            "treatment_plan": treatment_result.get("treatment_plan") if treatment_result.get("success") else None,
+            "rehabilitation_plan": rehab_result.get("rehabilitation_plan") if rehab_result.get("success") else None,
+            "patient_education": education_result.get("patient_education") if education_result.get("success") else None,
+            "appointment_schedule": appointment_result.get("appointment_schedule") if appointment_result.get("success") else None,
+            "agent_confidences": {
+                "treatment_planner": treatment_result.get("confidence", 0.0),
+                "rehabilitation": rehab_result.get("confidence", 0.0),
+                "patient_education": education_result.get("confidence", 0.0),
+                "appointment": appointment_result.get("confidence", 0.0),
+            },
+            "errors": {
+                k: v.get("error")
+                for k, v in {
+                    "treatment_planner": treatment_result,
+                    "rehabilitation": rehab_result,
+                    "patient_education": education_result,
+                    "appointment": appointment_result,
+                }.items()
+                if not v.get("success")
+            },
+        }
+
+        overall_confidence = sum(care_plan["agent_confidences"].values()) / 4
+        care_plan["overall_confidence"] = round(overall_confidence, 3)
+        care_plan["success"] = all([
+            treatment_result.get("success"),
+            rehab_result.get("success"),
+            education_result.get("success"),
+            appointment_result.get("success"),
+        ])
+
+        logger.info(
+            "Care plan generated: success={}, overall_confidence={:.2f}",
+            care_plan["success"],
+            care_plan["overall_confidence"],
+        )
+
+        return care_plan
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Care plan generation failed: {}", e)
+        raise HTTPException(status_code=500, detail=f"Care plan generation failed: {str(e)}")

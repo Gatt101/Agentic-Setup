@@ -22,6 +22,7 @@ from services.chat_store import chat_store
 from agents.agent_coordinator import agent_coordinator
 from services.agent_learning import adaptive_supervisor
 from services.probabilistic_reasoning import bayesian_updater
+import asyncio
 
 
 def _report_requested(state: AgentState) -> bool:
@@ -72,8 +73,10 @@ def should_continue(state: AgentState) -> str:
         }
     )
 
-    # If pipeline complete and either: report done, report not requested, or already attempted
+    # When clinical pipeline is complete, run care-plan agents before responding
     if diagnosis and triage:
+        if not state.get("care_plan_generated"):
+            return "care_plan_node"
         if not _report_requested(state):
             return "response_builder"
         if report_url:
@@ -158,6 +161,7 @@ def get_graph():
     workflow.add_node("tool_executor", tool_executor_node)
     workflow.add_node("response_builder", response_builder_node)
     workflow.add_node("error_handler", error_handler_node)
+    workflow.add_node("care_plan_node", care_plan_node)
 
     # Multi-agent integration node (optional, can be enabled via config)
     workflow.add_node("multi_agent_integrator", multi_agent_integration_node)
@@ -171,9 +175,12 @@ def get_graph():
             "tool_executor": "tool_executor",
             "response_builder": "response_builder",
             "error_handler": "error_handler",
+            "care_plan_node": "care_plan_node",
         },
     )
     workflow.add_edge("tool_executor", "supervisor")
+    # care_plan_node always goes directly to response_builder after running
+    workflow.add_edge("care_plan_node", "response_builder")
     workflow.add_conditional_edges(
         "error_handler",
         error_handler_route,
@@ -182,6 +189,124 @@ def get_graph():
     workflow.add_edge("response_builder", END)
 
     return workflow.compile(checkpointer=get_checkpointer())
+
+
+async def care_plan_node(state: AgentState) -> dict:
+    """
+    Run the four specialist care-plan agents in parallel once diagnosis and triage are ready.
+
+    TreatmentPlannerAgent + RehabilitationAgent   → doctor-facing outputs
+    PatientEducationAgent + AppointmentAgent       → patient-facing outputs
+
+    All four run regardless of role; response_builder renders the role-appropriate sections.
+    Skips gracefully if agents are unavailable or care plan was already generated.
+    """
+    if state.get("care_plan_generated"):
+        return {}
+
+    diagnosis = state.get("diagnosis")
+    triage = state.get("triage_result")
+    if not diagnosis or not triage:
+        return {"care_plan_generated": True}
+
+    session_id = state.get("session_id", "unknown")
+    logger.info("care_plan_node: starting for session={}", session_id)
+
+    # Ensure the coordinator has initialised its agents
+    if not agent_coordinator._agents_initialized:
+        try:
+            await agent_coordinator.coordinate_analysis({"session_id": "init_care_plan"})
+        except Exception:
+            pass
+
+    treatment_agent   = agent_coordinator.agents.get("treatment_planner_agent")
+    rehab_agent       = agent_coordinator.agents.get("rehabilitation_agent")
+    education_agent   = agent_coordinator.agents.get("patient_education_agent")
+    appointment_agent = agent_coordinator.agents.get("appointment_agent")
+    pdf_agent         = agent_coordinator.agents.get("pdf_generation_agent")
+
+    if not all([treatment_agent, rehab_agent, education_agent, appointment_agent]):
+        logger.warning("care_plan_node: one or more care-plan agents missing — skipping")
+        return {"care_plan_generated": True}
+
+    context = {
+        "session_id": session_id,
+        "diagnosis": diagnosis,
+        "triage_result": triage,
+        "patient_info": state.get("patient_info"),
+        "body_part": state.get("body_part") or state.get("body_region") or "",
+        "actor_role": state.get("actor_role"),
+    }
+
+    # Extend context with image data needed by the PDF agent
+    context["image_base64"]           = state.get("image_data")
+    context["annotated_image_base64"] = state.get("annotated_image_base64")
+    context["detections"]             = state.get("detections")
+
+    pdf_agents = [pdf_agent] if pdf_agent else []
+
+    try:
+        # Phase 1 — parallel perception (care-plan agents + PDF agent)
+        p = await asyncio.gather(
+            treatment_agent.perceive(context),
+            rehab_agent.perceive(context),
+            education_agent.perceive(context),
+            appointment_agent.perceive(context),
+            *(ag.perceive(context) for ag in pdf_agents),
+            return_exceptions=True,
+        )
+
+        def _safe(result: object) -> dict:
+            return result if isinstance(result, dict) else {}
+
+        # Phase 2 — parallel reasoning
+        r = await asyncio.gather(
+            treatment_agent.reason({**context, **_safe(p[0])}),
+            rehab_agent.reason({**context, **_safe(p[1])}),
+            education_agent.reason({**context, **_safe(p[2])}),
+            appointment_agent.reason({**context, **_safe(p[3])}),
+            *(ag.reason({**context, **_safe(p[4 + i])}) for i, ag in enumerate(pdf_agents)),
+            return_exceptions=True,
+        )
+
+        def _first_action(reasoning: object) -> dict:
+            if not isinstance(reasoning, dict):
+                return {}
+            return (reasoning.get("recommended_actions") or [{}])[0]
+
+        # Phase 3 — parallel action execution (care-plan agents only; PDF generates on demand)
+        a = await asyncio.gather(
+            treatment_agent.act(_first_action(r[0])),
+            rehab_agent.act(_first_action(r[1])),
+            education_agent.act(_first_action(r[2])),
+            appointment_agent.act(_first_action(r[3])),
+            return_exceptions=True,
+        )
+
+        updates: dict = {"care_plan_generated": True}
+
+        if isinstance(a[0], dict) and a[0].get("success"):
+            updates["treatment_plan"] = a[0].get("treatment_plan")
+        if isinstance(a[1], dict) and a[1].get("success"):
+            updates["rehabilitation_plan"] = a[1].get("rehabilitation_plan")
+        if isinstance(a[2], dict) and a[2].get("success"):
+            updates["patient_education"] = a[2].get("patient_education")
+        if isinstance(a[3], dict) and a[3].get("success"):
+            updates["appointment_schedule"] = a[3].get("appointment_schedule")
+
+        logger.info(
+            "care_plan_node: done session={} treatment={} rehab={} education={} appointment={}",
+            session_id,
+            bool(updates.get("treatment_plan")),
+            bool(updates.get("rehabilitation_plan")),
+            bool(updates.get("patient_education")),
+            bool(updates.get("appointment_schedule")),
+        )
+        return updates
+
+    except Exception as exc:
+        logger.error("care_plan_node failed session={}: {}", session_id, exc)
+        return {"care_plan_generated": True}
 
 
 async def multi_agent_integration_node(state: AgentState) -> dict:
