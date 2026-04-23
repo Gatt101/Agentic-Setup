@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     supervisor_llm: str = "gpt-4o"
     fast_llm: str = "gpt-4o-mini"
 
+    # SerpAPI (Google Maps hospital search)
+    serp_api_key: str = ""
+
     # LangSmith
     langchain_tracing_v2: bool = True
     langchain_api_key: str = ""

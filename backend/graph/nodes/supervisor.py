@@ -143,6 +143,12 @@ def _build_pipeline_context(state: AgentState) -> str:
     else:
         lines.append("Triage: NOT YET")
 
+    hospitals = state.get("hospitals")
+    if isinstance(hospitals, list) and hospitals:
+        lines.append(f"Nearby hospitals: {len(hospitals)} option(s) already fetched — do NOT call hospital tool again")
+    else:
+        lines.append("Nearby hospitals: not yet fetched")
+
     # Patient info — only surface the "needed" label during an explicit report request
     pi = state.get("patient_info") or {}
     missing_fields = _missing_patient_fields(state)
@@ -525,6 +531,8 @@ async def supervisor_node(state: AgentState) -> dict:
     has_any_image = has_image_data or has_volume_path
     modality = state.get("modality")
 
+    report_requested_this_turn = _report_requested(state)
+
     if modality == "ct" and has_volume_path:
         toolset = [t for t in ALL_TOOLS if t.name not in {n for n in IMAGE_TOOL_NAMES if n.startswith("vision_") and n not in MODALITY_NAMESPACE}]
     elif modality == "mri" and has_volume_path:
@@ -533,6 +541,11 @@ async def supervisor_node(state: AgentState) -> dict:
         toolset = ALL_TOOLS
     else:
         toolset = NON_VISION_TOOLS
+
+    # Report generation must be explicit per user turn.
+    if not report_requested_this_turn:
+        toolset = [t for t in toolset if not t.name.startswith("report_generate_")]
+
     llm = get_supervisor_llm().bind_tools(toolset)
     session_id = state.get("session_id", "unknown")
     iteration = state.get("iteration_count", 0)
@@ -709,9 +722,20 @@ async def supervisor_node(state: AgentState) -> dict:
     # so it generates nonsense like "Please upload an image".  The response_builder
     # node will produce the rich clinical summary directly from state.
     _pipeline_complete = bool(state.get("diagnosis")) and bool(state.get("triage_result"))
-    _report_needed = _report_requested(state)
-    if _pipeline_complete and not _report_needed and not _report_already_done:
-        logger.info("session={} analysis pipeline complete, routing directly to response_builder", session_id)
+    _report_needed = report_requested_this_turn
+    # Only short-circuit to response_builder for trivial acknowledgments after pipeline is done.
+    # Any real question or request must go through the LLM so it can use full context
+    # (hospitals, follow-ups, advice, etc.). The old narrow keyword list missed many valid
+    # queries like "can you provide nearby hospitals" or "give me more details".
+    _TRIVIAL_ACKS = frozenset({
+        "ok", "okay", "thanks", "thank you", "great", "good", "noted",
+        "understood", "alright", "fine", "perfect", "sure", "cool", "nice",
+        "got it", "sounds good", "got it thanks",
+    })
+    _user_msg_clean = str(state.get("user_message") or "").lower().strip().rstrip(".,!? ")
+    _is_trivial_ack = _user_msg_clean in _TRIVIAL_ACKS
+    if _pipeline_complete and not _report_needed and not _report_already_done and _is_trivial_ack:
+        logger.info("session={} trivial ack after pipeline complete, routing directly to response_builder", session_id)
         return {
             "messages": [AIMessage(content="")],  # empty — response_builder uses structured state
             "iteration_count": state.get("iteration_count", 0) + 1,

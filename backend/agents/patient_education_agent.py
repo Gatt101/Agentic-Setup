@@ -124,12 +124,12 @@ class PatientEducationAgent(BaseAgent):
             patient_age = int(patient_info.get("age", 40))
             body_part = self.education_context.get("body_part", "")
 
-            result = await edu_tool._arun(
-                diagnosis=diag_str,
-                triage_level=triage_level,
-                body_part=body_part,
-                patient_age=patient_age,
-            )
+            result = await edu_tool.ainvoke({
+                "diagnosis": diag_str,
+                "triage_level": triage_level,
+                "body_part": body_part,
+                "patient_age": patient_age,
+            })
 
             return {"success": True, "patient_education": result, "confidence": 0.90}
 

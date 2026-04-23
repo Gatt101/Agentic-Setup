@@ -126,12 +126,12 @@ class AppointmentAgent(BaseAgent):
             patient_age = int(patient_info.get("age", 40))
             body_part = self.appointment_context.get("body_part", "")
 
-            result = await appt_tool._arun(
-                diagnosis=diag_str,
-                triage_level=triage_level,
-                body_part=body_part,
-                patient_age=patient_age,
-            )
+            result = await appt_tool.ainvoke({
+                "diagnosis": diag_str,
+                "triage_level": triage_level,
+                "body_part": body_part,
+                "patient_age": patient_age,
+            })
 
             return {"success": True, "appointment_schedule": result, "confidence": 0.88}
 

@@ -25,6 +25,12 @@ _STALE_LLM_PHRASES = (
     "i need the image",
 )
 
+_STALE_REPORT_PHRASES = (
+    "your pdf report is ready",
+    "your report is already available",
+    "your report has been generated successfully",
+)
+
 _REPORT_TOOLS = {
     "report_generate_patient_pdf",
     "report_generate_clinician_pdf",
@@ -60,6 +66,11 @@ def _last_non_tool_ai_message(state: AgentState) -> str | None:
             # from the supervisor running one extra iteration after the pipeline.
             if pipeline_has_results and any(phrase in text.lower() for phrase in _STALE_LLM_PHRASES):
                 logger.debug("response_builder: discarding stale LLM message: {:.80}", text)
+                continue
+
+            # Avoid replaying old PDF-confirmation text as answer to unrelated follow-up questions.
+            if any(phrase in text.lower() for phrase in _STALE_REPORT_PHRASES):
+                logger.debug("response_builder: discarding stale report message: {:.80}", text)
                 continue
 
             return text
@@ -138,9 +149,10 @@ async def response_builder_node(state: AgentState) -> dict:
             }
 
     # If the full clinical pipeline ran, build a proper structured summary.
-    # Do this BEFORE checking _last_non_tool_ai_message so a stale LLM message
-    # (e.g. "Please upload an image") never overrides real analysis results.
-    if diagnosis and triage:
+    # Only show the structured analysis block when analysis tools actually ran
+    # THIS turn — otherwise follow-up questions would always return the same
+    # hardcoded analysis card from persisted pipeline state.
+    if diagnosis and triage and analysis_generated_this_turn:
         primary = (
             diagnosis.get("primary_diagnosis")
             or diagnosis.get("finding")
@@ -309,12 +321,54 @@ async def response_builder_node(state: AgentState) -> dict:
 
         return {"final_response": "\n".join(lines)}
 
-    # Fallback: use the last non-tool LLM message (e.g. for knowledge/text-only answers)
+    # Hospital results — render a formatted card when the hospital tool ran this turn.
+    # This fires before the LLM-message fallback so the user always sees structured data.
+    if "hospital_find_nearby_hospitals" in tool_calls_made:
+        nearby = state.get("hospitals") or []
+        if nearby:
+            h_lines = [f"## 🏥 Nearby Hospitals ({len(nearby)} found)\n"]
+            for i, h in enumerate(nearby[:5], 1):
+                name = h.get("name", f"Hospital {i}")
+                address = h.get("address", "")
+                phone = h.get("phone", "")
+                services = h.get("services") or []
+                er = h.get("er_available", False)
+                h_lines.append(
+                    f"**{i}. {name}**" + ("  🚨 *ER Available*" if er else "")
+                )
+                if address:
+                    h_lines.append(f"   📍 {address}")
+                if phone:
+                    h_lines.append(f"   📞 {phone}")
+                if services:
+                    h_lines.append(f"   🏥 {', '.join(str(s) for s in services[:3])}")
+                h_lines.append("")
+            if triage:
+                triage_level = str(triage.get("level") or triage.get("triage_level") or "GREEN").upper()
+                h_lines.append(
+                    f"*Based on your **{_triage_label(triage_level)}** assessment, "
+                    "please contact the most appropriate facility promptly.*"
+                )
+            return {"final_response": "\n".join(h_lines)}
+
+    # Fallback: use the last non-tool LLM message (e.g. for knowledge/text-only answers
+    # or follow-up questions after a prior analysis).
     ai_message = _last_non_tool_ai_message(state)
     if ai_message:
         return {"final_response": ai_message}
 
-    # Final fallback — partial pipeline
+    # Final fallback — prior analysis exists but LLM gave no conversational answer
+    if diagnosis and triage:
+        primary = diagnosis.get("primary_diagnosis") or diagnosis.get("finding") or "N/A"
+        triage_level = str(triage.get("level") or triage.get("triage_level") or "GREEN").upper()
+        resp = (
+            f"Based on the prior analysis, the finding was **{primary}** "
+            f"with triage level **{_triage_label(triage_level)}**.\n\n"
+            "Please ask a specific question about the diagnosis, treatment options, or rehabilitation, "
+            "and I'll answer based on this case."
+        )
+        return {"final_response": resp}
+
     if diagnosis:
         primary = diagnosis.get("primary_diagnosis") or diagnosis.get("finding") or "N/A"
         severity = str(diagnosis.get("severity") or "N/A")

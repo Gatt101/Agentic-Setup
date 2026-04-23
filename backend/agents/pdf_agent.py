@@ -161,28 +161,28 @@ class PDFGenerationAgent(BaseAgent):
             if not recs:
                 recs = ["Follow clinical protocol appropriate to triage level."]
 
-            result = await pdf_tool._arun(
-                diagnosis=diagnosis,
-                triage=triage,
-                patient_info=pi,
-                actor_role=str(ctx.get("actor_role") or "doctor"),
-                image_base64=ctx.get("image_base64"),
-                annotated_image_base64=ctx.get("annotated_image_base64"),
-                detections=ctx.get("detections") or [],
-                recommendations=recs,
-                metadata={
-                    "patient_id":     str(pi.get("patient_id") or "unknown"),
-                    "patient_name":   str(pi.get("name")   or ""),
-                    "patient_age":    str(pi.get("age")    or ""),
+            result = await pdf_tool.ainvoke({
+                "diagnosis": diagnosis,
+                "triage": triage,
+                "patient_info": pi,
+                "actor_role": str(ctx.get("actor_role") or "doctor"),
+                "image_base64": ctx.get("image_base64"),
+                "annotated_image_base64": ctx.get("annotated_image_base64"),
+                "detections": ctx.get("detections") or [],
+                "recommendations": recs,
+                "metadata": {
+                    "patient_id": str(pi.get("patient_id") or "unknown"),
+                    "patient_name": str(pi.get("name") or ""),
+                    "patient_age": str(pi.get("age") or ""),
                     "patient_gender": str(pi.get("gender") or ""),
-                    "doctor_name":    str(pi.get("doctor") or ""),
-                    "body_part":      str(ctx.get("body_part") or pi.get("body_part") or ""),
+                    "doctor_name": str(pi.get("doctor") or ""),
+                    "body_part": str(ctx.get("body_part") or pi.get("body_part") or ""),
                 },
-                treatment_plan=ctx.get("treatment_plan"),
-                rehabilitation_plan=ctx.get("rehabilitation_plan"),
-                patient_education=ctx.get("patient_education"),
-                appointment_schedule=ctx.get("appointment_schedule"),
-            )
+                "treatment_plan": ctx.get("treatment_plan"),
+                "rehabilitation_plan": ctx.get("rehabilitation_plan"),
+                "patient_education": ctx.get("patient_education"),
+                "appointment_schedule": ctx.get("appointment_schedule"),
+            })
 
             if result.get("error"):
                 return {"success": False, "error": result["error"]}

@@ -127,12 +127,12 @@ class RehabilitationAgent(BaseAgent):
             patient_age = int(patient_info.get("age", 40))
             body_part = self.rehab_context.get("body_part", "")
 
-            result = await rehab_tool._arun(
-                diagnosis=diag_str,
-                triage_level=triage_level,
-                patient_age=patient_age,
-                body_part=body_part,
-            )
+            result = await rehab_tool.ainvoke({
+                "diagnosis": diag_str,
+                "triage_level": triage_level,
+                "patient_age": patient_age,
+                "body_part": body_part,
+            })
 
             return {"success": True, "rehabilitation_plan": result, "confidence": 0.88}
 

@@ -126,11 +126,11 @@ class TreatmentPlannerAgent(BaseAgent):
             triage_level = triage.get("level", "AMBER")
             patient_age = int(patient_info.get("age", 40))
 
-            result = await treatment_tool._arun(
-                diagnosis=diag_str,
-                triage_level=triage_level,
-                patient_age=patient_age,
-            )
+            result = await treatment_tool.ainvoke({
+                "diagnosis": diag_str,
+                "triage_level": triage_level,
+                "patient_age": patient_age,
+            })
 
             severity = diagnosis.get("severity", "moderate") if isinstance(diagnosis, dict) else "moderate"
             approach = (
