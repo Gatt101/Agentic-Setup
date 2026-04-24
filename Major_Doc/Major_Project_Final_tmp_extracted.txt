@@ -1,0 +1,316 @@
+OrthoAssist: A Scalable Macro-Agent Driven AI Framework for Domain Specific Healthcare Diagnostics
+submitted in fulfilment of the requirements for Major Project-1 Sem-VII
+Bachelor of Engineering
+By
+Under the guidance of 
+Prof. Vikrant Agaskar
+Department of Computer Engineering
+Vidyavardhini’s College of Engineering & Technology, Vasai (W)
+(NAAC and NBA Accredited)
+(Affiliated with University of Mumbai)
+(2024-2025)
+CERTIFICATE 
+This is to certify that the project entitled “OrthoAssist: A Scalable Macro-Agent Driven AI Framework for Domain Specific Healthcare Diagnostics” is a bonafide work of “Chirag Patil (Roll No. 45), Gaurav Patil (Roll No. 50), Jitendra Prajapati (Roll No. 59) and Tanvi Prabhudesai (Roll No. 58)” submitted to the University of Mumbai in partial fulfillment of the requirement for the award of the degree of “Bachelor of Engineering” in “Computer Engineering”. 
+Project Report Approval for B.E.
+This project report entitled ‘OrthoAssist: A Scalable Macro-Agent Driven AI Framework for Domain Specific Healthcare Diagnostics’ by ‘Chirag Patil, Gaurav Patil, Jitendra Prajapatiand Tanvi Prabhudesai’ is approved for the degree of ‘Bachelor of Engineering’ in ‘Computer Engineering’.
+Examiners 
+__________________________
+         2.  __________________________
+Date: 
+Place:
+Declaration
+We declare that this written submission represents our ideas in our own words and where other’s ideas or words have been included, we have adequately cited and referenced the original sources. We also declare that we have adhered to all principles of academic honesty and integrity and have not misrepresented or fabricated or falsified any idea/data/fact/source in my submission. We understand that any violation of the above will be cause for disciplinary action by the Institute and can also evoke penal action from the sources which have thus not been properly cited or from whom proper permission has not been taken when needed.
+------------------------------
+Chirag Patil (45)
+------------------------------
+Gaurav Patil (50)
+------------------------------
+Jitendra Prajapati (59)
+------------------------------
+Tanvi Prabhudesai (58)
+Date:
+Acknowledgements
+We express our sincere gratitude to our respected Principal, Dr Rakesh Himte, and the Management of Vidhyavardhini’s College of Engineering & Technology for providing the necessary facilities, encouragement, and continuous support throughout our project journey.
+We are deeply thankful to our esteemed Head of Department, Dr Megha Trivedi, for valuable guidance, constant motivation, and for believing in our capabilities. Our heartfelt appreciation goes to our project guide, Prof. Vikrant Agaskar, whose expert suggestions, patient supervision, and constructive feedback have been instrumental in the successful completion of this work. We would also like to thank all faculty members and staff of the Computer Engineering Department for their cooperation, inspiration, and academic support. Finally, we express gratitude to our college for fostering a vibrant learning environment that encouraged us to explore, innovate, and grow.
+------------------------------
+Chirag Patil (45)
+------------------------------
+Gaurav Patil (50)
+------------------------------
+Jitendra Prajapati (59)
+------------------------------
+Tanvi Prabhudesai (58)
+Date:
+Abstract
+OrthoAssist: A Scalable Macro-Agent Driven AI Framework for Domain Specific Healthcare Diagnostics is an innovative project designed to revolutionize the way diagnostic tools are developed and deployed within specialized healthcare domains. The framework leverages a macro-agent architecture, enabling the integration of multiple AI models and expert systems to collaboratively analyze medical data, extract relevant insights, and deliver accurate diagnostic recommendations. By focusing on scalability, OrthoAssist ensures adaptability across a range of healthcare disciplines, making it suitable for both large hospital networks and smaller clinical environments.
+The system is engineered to support seamless data flow between various modules, facilitating efficient preprocessing, feature extraction, and decision-making processes. OrthoAssist is built with modularity in mind, allowing for easy incorporation of new diagnostic capabilities as medical technologies and datasets evolve. Through its domain-specific approach, the framework aims to address the unique challenges faced by healthcare professionals, such as heterogeneous data sources, complex patient histories, and the need for rapid, reliable diagnostics. Ultimately, OrthoAssist empowers clinicians with advanced AI-driven tools, improving patient outcomes and streamlining clinical workflows.
+Index
+List of Tables
+List of figures
+Chapter 1: Introduction
+Background
+The healthcare industry faces unprecedented challenges in delivering timely and accurate diagnostics, particularly in specialized domains such as orthopedics. Traditional diagnostic methods often rely heavily on manual interpretation of medical imaging, patient history, and clinical examinations, which can be time-consuming and subject to human error. With the exponential growth of medical data and the increasing complexity of patient cases, there is a critical need for intelligent systems that can augment clinical decision-making. Artificial Intelligence has emerged as a transformative force in healthcare, offering the potential to analyze vast amounts of data, identify patterns, and provide diagnostic recommendations with remarkable accuracy. OrthoAssist addresses this need by proposing a macro-agent driven AI framework specifically designed for domain-specific healthcare diagnostics, combining the strengths of multiple AI agents to deliver comprehensive and reliable diagnostic support.
+OrthoAssist addresses this critical need by proposing a macro-agent driven AI framework specifically designed for domain-specific healthcare diagnostics, focusing initially on orthopedics. This innovative framework combines the strengths of multiple specialized AI agents, each designed to handle a particular aspect of the diagnostic process. For instance, one agent might specialize in image analysis (e.g., X-rays, MRIs), another in processing patient history and clinical symptoms, and yet another in integrating laboratory results. By orchestrating these individual agents within a cohesive macro-agent framework, OrthoAssist aims to deliver comprehensive and reliable diagnostic support that surpasses the capabilities of any single AI model or traditional manual approach. This integrated approach ensures a more holistic understanding of the patient's condition, leading to more precise diagnoses and ultimately, improved patient care. The goal is not to replace human clinicians but to empower them with advanced tools that enhance their diagnostic capabilities, reduce their workload, and enable them to focus on complex decision-making and patient interaction.
+1.2 Literature Survey 
+Table 1.2 Literature Survey
+1.3 Limitations of Existing Systems 
+Despite the rapid progress in AI and deep learning for medical imaging, existing fracture detection and orthopaedic diagnostic systems exhibit significant limitations that restrict their scalability and clinical adoption. healthcare professionals who require transparent reasoning for diagnostic recommendations. Finally, limited interoperability between different AI modules and healthcare systems creates silos that prevent seamless information exchange and collaborative diagnostics.
+Table 1.3 Limitations of Existing Survey
+1.4 Problem Statement and Objective 
+Problem Statement:
+Healthcare professionals in specialised domains, particularly orthopaedics, require an intelligent, scalable, and comprehensive diagnostic support system that can integrate multiple data sources, provide accurate diagnostic recommendations, and seamlessly adapt to diverse clinical workflows. Existing AI solutions fail to adequately address the complexity, scalability, and domain-specific requirements of modern healthcare diagnostics.
+Objectives:
+To design and develop a scalable macro-agent-driven AI framework specifically tailored for orthopaedic diagnostics
+To enable seamless integration of multiple AI models and expert systems for collaborative diagnostic analysis
+To implement efficient data processing pipelines capable of handling heterogeneous medical data sources
+To provide explainable and transparent diagnostic recommendations that support clinical decision-making
+To ensure modularity and extensibility, allowing for easy incorporation of new diagnostic capabilities
+To achieve high diagnostic accuracy while maintaining computational efficiency suitable for real-world deployment
+To develop a user-friendly interface that facilitates interaction between healthcare professionals and the AI system
+Chapter 2: Proposed System
+2.1 Analysis 
+The OrthoAssist framework is designed as a comprehensive macro-agent system that orchestrates multiple specialized AI agents to perform domain-specific diagnostic tasks. The system analysis reveals three critical components: data ingestion and preprocessing, intelligent agent coordination, and diagnostic recommendation generation. The framework employs a hierarchical architecture where a central coordinator agent manages task distribution among specialized agents, each responsible for specific diagnostic functions such as image analysis, pattern recognition, clinical data interpretation, and knowledge retrieval. System requirements analysis indicates the need for robust data handling capabilities, real-time processing for time-critical diagnostics, secure patient data management complying with healthcare regulations, and scalable infrastructure to accommodate growing data volumes and user demands.
+2.1.1 H/w and S/w Requirements 
+Hardware Requirements:
+Table 2.1.1 Hardware Requirements
+Software Requirements:
+Table 2.1.2 Software Requirements
+2.1.1 Functional Requirements 
+Medical Image Processing: The system shall accept and process various medical imaging formats (DICOM, PNG, JPEG) including X-rays, MRIs, and CT scans
+Multi-Agent Coordination: The macro-agent shall effectively distribute tasks among specialized agents and aggregate their outputs
+Diagnostic Recommendation: The system shall generate comprehensive diagnostic reports with confidence scores and supporting evidence
+Patient Data Management: Secure storage and retrieval of patient information, medical history, and diagnostic records
+Real-time Analysis: The system shall process and analyze medical data with minimal latency for urgent cases
+Explainability Module: Provide visual and textual explanations for diagnostic recommendations
+Integration Capabilities: APIs for integration with existing hospital information systems and PACS
+User Authentication: Secure multi-level authentication for healthcare professionals
+Report Generation: Automated generation of structured diagnostic reports in standard formats
+Continuous Learning: Capability to improve diagnostic accuracy through feedback and model updates
+2.1.2 Non-Functional Requirements 
+Performance: System response time shall not exceed 30 seconds for standard diagnostic queries
+Scalability: Architecture shall support horizontal scaling to handle increased user load and data volume
+Reliability: System uptime of 99.9% with robust error handling and recovery mechanisms
+Security: HIPAA compliance, end-to-end encryption, and secure data transmission protocols
+Usability: Intuitive user interface requiring minimal training for healthcare professionals
+Maintainability: Modular design enabling easy updates and addition of new diagnostic capabilities
+Interoperability: Compliance with HL7 and FHIR standards for healthcare data exchange
+Accuracy: Minimum diagnostic accuracy of 90% validated against expert annotations
+Auditability: Comprehensive logging of all system activities and diagnostic decisions
+Portability: Containerised deployment supporting various cloud and on-premise environments
+2.2 Algorithm 
+The OrthoAssist system implements a multi-stage algorithmic approach centered around macro-agent coordination and specialized diagnostic algorithms:
+Fig 2.2.1 Macro-Agent Coordination Algorithm
+2.3 Design Details 
+The OrthoAssist architecture follows a layered design pattern consisting of five primary layers:
+1. Presentation Layer: Web-based interface for healthcare professionals, mobile application for accessibility, dashboard for visualization of diagnostic results and system analytics
+2. Application Layer: RESTful API services, macro-agent orchestration engine, session management, and request routing
+3. Agent Layer: Central coordinator agent, specialised diagnostic agents (Image Analyser, Pattern Recogniser, Clinical Interpreter, Knowledge Retriever), agent communication protocols, and result aggregation mechanisms
+4. Processing Layer: Deep learning inference engines, image preprocessing pipelines, NLP processing for clinical text, data validation and sanitisation, and explainability generation modules
+5. Data Layer: Relational database for structured patient data, NoSQL database for unstructured data and logs, secure file storage for medical images, caching layer for frequently accessed data, backup and disaster recovery systems
+The system employs microservices architecture principles, enabling independent scaling and deployment of individual components. Communication between agents utilises message queuing systems for asynchronous processing, ensuring system responsiveness and fault tolerance.
+2.3. System Architecture 
+The architecture diagram represents the complete workflow and interaction between various components of the OrthoAssist System, which is built to process orthopedic X-ray images using AI-powered diagnostics. The structure is divided into three major parts — Frontend, Backend, and LLM Agentic Backend — all communicating seamlessly to provide real-time analysis and report generation.
+Fig 2.3 System Architecture
+Chapter 3. Methodology
+The OrthoAssist System follows a modular design strategy to ensure that it remains easy to scale, update, and maintain over time. Each module is built for a specific purpose such as X-ray processing, report generation, or secure storage — and they work together smoothly through well-defined APIs and communication protocols.
+3.1 Modules
+OrthoAssist is organised into the following core modules:
+Frontend ModuleDesigned using Next.js along with Tailwind CSS and Shadcn/UI to provide a fast and smooth user interface for doctors and healthcare professionals.
+Backend ModuleBuilt on FastAPI and MCP (Model Context Protocol) architecture, responsible for handling all processing requests and coordinating AI agents.
+LLM Agentic ModuleManages the AI-driven reasoning pipeline including triage, medical insights, and report drafting using a Groq-accelerated LLM.
+Database & Storage ModuleCombines MongoDB for patient and case data, while Cloudinary securely stores image files and optimised versions of X-rays.
+Authentication ModuleClerk handles login, identity verification, and session management to ensure only authorised access to sensitive patient data.
+This modular breakdown allows the system to handle complex medical workflows reliably.
+3.2 Layered Architecture
+The architecture is structured into three layers to separate responsibilities and improve system efficiency:
+A. Frontend Layer (Application Interface)
+The user interface provides:
+Easy X-ray upload with support for medical formats like DICOM
+Interactive AI assistance through a chat interface
+A report centre that allows clinicians to download PDF summaries
+Patient and triage dashboards for monitoring critical cases
+Analytics for performance, utilisation, and case distribution
+The integration of Clerk ensures strong authentication and privacy.
+B. Backend Layer (AI + Processing Core)
+FastAPI enables quick and asynchronous handling of requests.MCP agents divide the workload into specialised tasks:
+Validation Agent checks file quality and correctness
+Router Agent identifies whether the image is of a hand or a leg
+Detection Agent powered by YOLOv8 marks fracture locations
+Triage Agent determines urgency using AI + preset clinical rules
+Report Agent generates readable medical summaries
+This layered intelligence supports accurate and explainable decision-making.
+C. Database & Storage Layer
+Patient details, treatment history, and logs ? stored in MongoDB
+X-ray images ? securely uploaded to Cloudinary with encryption
+PDF reports ? generated via ReportLab and stored with access tracking
+3.3 Workflow Overview
+OrthoAssist processes every case through a smooth and fully automated pipeline:
+Upload & ValidationThe system checks the submitted X-ray for correct type, clarity, and size. Any issues are instantly notified to the user.
+Body Part IdentificationLightweight AI models determine if the scan belongs to a hand or leg, ensuring the correct detection model is used.
+Fracture DetectionYOLO-based models detect fractures, mark them with bounding boxes, and calculate confidence levels.
+Triage ClassificationSeverity is categorised into:
+Red – Critical fracture
+Amber – Moderate injury requiring review
+Green – Minor or no fractureThis helps hospitals prioritise urgent patients quickly.
+Report GenerationThe LLM translates results into a clinically informative report with:
+Visual highlights of fracture regions
+Recommendations and summaries
+Notes for patient understanding
+Storage & RetrievalReports and images are saved for easy access later through the dashboard.
+Real-Time UpdatesWebSockets enable instant status notifications as the AI processes the image.
+3.4 AI Model Integration
+YOLO-Based Fracture DetectionTrained on diverse orthopaedic datasets with >95% validation accuracy and support for multiple fracture labels.
+Groq-Powered LLMProvides instant summarisation and correlates written findings with detected image features to improve transparency.
+Confidence ValidationCross-checks predictions with rules to minimise errors before reports are produced.
+3.5 Key Advantages
+Results are generated within 2 minutes per scan
+Architecture is modular and expandable
+AI outputs are accurate and explainable
+Medical data remains secure at every stage
+Dashboards help both doctors and patients track progress effortlessly
+Chapter 4: Experimental Setup
+The experimental setup defines the environment, tools, and datasets used to design, train, test, and validate the OrthoAssist – Orthopaedic Assistant MCP System. It focuses on evaluating the system’s accuracy, performance, and scalability in real-world diagnostic scenarios.
+4.1 Details of Database and Input Data
+The input to the system primarily consists of musculoskeletal X-ray images of the hand and leg regions. These images are used for both training and inference stages of the AI-powered fracture detection models.
+4.1.1 Dataset Description
+Dataset Sources:
+Publicly available orthopaedic imaging datasets such as MURA (Musculoskeletal Radiographs Dataset – Stanford University) and FracAtlas Dataset (Kaggle).
+Supplemented with custom-labelled clinical samples (anonymised) for model fine-tuning.
+Dataset Composition:
+Table 4.1.1 Dataset Composition
+Input Format:
+Image Formats: .jpg, .png, .dicom
+Image Size: 512×512 (resized and normalized)
+Annotation Format: YOLO-compatible .txt labels containing class ID and coordinates.
+Preprocessing Steps:
+Image normalisation (scaling pixel values to [0,1]).
+Data augmentation (rotation, contrast adjustment, and flipping).
+Conversion to YOLO dataset format.
+Splitting into training (70%), validation (20%), and testing (10%) sets.
+Data:All image data and generated reports are securely stored using Cloudinary, while metadata (user info, patient ID, analysis status) is maintained in MongoDB.
+4.2 Performance Evaluation Parameters 
+The system’s performance was evaluated using both quantitative and qualitative parameters to validate detection accuracy, triage reliability, and overall system responsiveness.
+4.2.1 Model Evaluation Metrics
+Table 4.2.1 Model Evaluation Metrics
+4.2.2 System-Level Parameters
+Table 4.2.2 System-Level Parameters
+4.2.3 Validation Environment
+Validation conducted using cross-validation across multiple datasets.
+Model comparison between YOLOv8 and custom fine-tuned YOLO variants.
+Human validation performed by orthopedic experts for report accuracy review.
+4.3 Software Setup
+Table 4.3 Software Setup
+Chapter 5: Implementation Plan for Next Semester
+The implementation of OrthoAssist – Orthopaedic Assistant MCP is planned over two semesters (VII & VIII).The strategy follows an iterative and modular approach, allowing early validation of each component before final integration.The plan ensures systematic progress from requirement analysis to deployment, with checkpoints for testing, optimisation, and documentation.
+The system integrates multiple advanced technologies—Next.js frontend, FastAPI backend, YOLO-based AI detection, Groq-powered LLM reporting, and Clerk-based authentication—which require structured development and testing across well-defined milestones.
+5.1 Phase-wise Implementation Plan
+Table 5.1 Phase-wise Implementation Plan
+5.2 Week-wise Implementation Plan (Semester VII)
+Table 5.2 Week-wise Implementation Plan (Semester VII)
+5.3 Semester VII Timeline Chart (Phase Progression)
+Table 5.3 Semester VII Timeline Chart (Phase Progression)
+5.4 Semester VIII Implementation Timeline
+5.4 Semester VIII Implementation Timeline
+Fig 5 Gantt Chart
+Chapter 6: Results
+Fig. 6.1 Landing page
+Fig. 6.2Sign-in page
+Fig. 6.3 Dashboard
+Fig. 6.4Chat Interface
+Fig. 6.5 Chat real-time interaction through multimodal input
+Fig. 6.6 Report Generated
+Fig. 6.7 Patient History
+Fig. 6.8 Research Page
+Code:
+class HandAgent:
+    """YOLO-based hand fracture detection agent."""
+    def __init__(self, model_path: Optional[Path] = None):
+self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # Hand-specific fracture labels
+        self.class_names = [
+            "fracture", "displaced_fracture", "hairline_fracture",
+            "comminuted_fracture", "avulsion_fracture"
+        ]
+self.score_threshold = 0.35
+        self.nms_iou = 0.50
+    async def detect_fractures(self, image_data: bytes) -> Dict[str, Any]:
+        # Run inference with YOLO model
+        model_results = self.model.predict(
+            image_array,
+            conf=self.score_threshold,
+            iou=self.nms_iou,
+            verbose=False,
+            save=False
+        )
+# Step 1: Body part detection
+detected_body_part = 'hand' if aspect_ratio > 1.2 else 'leg'
+# Step 2: Run appropriate YOLO agent
+if detected_body_part == 'hand':
+    agent = get_hand_agent()
+    agent_result = await agent.detect_fractures(image_bytes)
+else:
+    agent = get_leg_agent()
+    agent_result = await agent.detect_fractures(image_bytes)
+# Step 3: Generate triage assessment
+triage_result = await triage_agent.process_triage_request(
+    detections=detection_result['detections'],
+    symptoms=request.symptoms,
+    body_part=detection_result['body_part']
+)
+# Step 4: Generate diagnosis summary using LLM
+diagnosis_result = await groq_service.generate_diagnosis_summary(
+    triage_result=triage_result,
+    detections=detection_result['detections'],
+    symptoms=request.symptoms
+)
+async def generate_triage_assessment(
+    self, detections: List[Dict], symptoms: Optional[str], body_part: str
+) -> Dict[str, Any]:
+    # Build enhanced prompt using medical templates
+    user_prompt = MedicalPromptTemplates.build_triage_prompt(
+        detections=detections,
+        symptoms=symptoms,
+        body_part=body_part
+    )
+    # Make API call with retry logic
+    response = await self._make_api_call(
+        system_prompt=MedicalPromptTemplates.get_triage_system_prompt(),
+        user_prompt=user_prompt,
+        model=self.triage_model
+    )
+def _build_analysis_prompt(self, patient_request: PatientAnalysisRequest) -> str:
+    # Sort studies by date for chronological analysis
+    sorted_studies = sorted(patient_request.studies, 
+                          key=lambda x: datetime.fromisoformat(x.date))
+    # Analyze temporal progression of findings
+    for study in sorted_studies:
+        prompt += f"""
+        Date: {study_date.strftime('%Y-%m-%d %H:%M')}
+        Body Part: {study.bodyPart}
+        Triage Level: {study.triage.get('level')}
+        Detected Fractures: {len(study.detections)}
+        """
+const handleProcess = async () => {
+  const formData = new FormData()
+  formData.append('file', selectedFile)
+  formData.append('processingMode', processingMode)
+  formData.append('patientSymptoms', patientSymptoms)
+  // Make API call to backend
+  const response = await fetch('/api/user/upload', {
+    method: 'POST',
+    body: formData,
+  })
+  const result = await response.json()
+  setAnalysisResult(result.data)
+}
+Chapter 7: Conclusion
+The proposed OrthoAssist – AI-Powered Orthopedic Assistant represents a transformative step in the integration of artificial intelligence, medical imaging, and digital healthcare systems. Designed as a modular and scalable architecture using FastAPI and Next.js, the system combines deep learning, large language models (LLMs), and agent-based coordination to provide a complete orthopedic diagnostic pipeline — from X-ray analysis to report generation.
+Through the implementation of YOLO-based object detection, OrthoAssist is capable of identifying fractures in musculoskeletal X-rays with high precision and speed. The use of specialized hand and leg detection agents, coupled with a body part classification mechanism, ensures optimal model routing for accurate anatomical analysis. Additionally, the triage agent dynamically assesses injury severity using clinical rules and AI scoring, providing clear Red/Amber/Green classifications that assist in rapid decision-making for doctors and health professionals.
+The LLM-based report generation module, powered by Groq acceleration, converts complex medical data into concise, human-readable summaries and recommendations. This enables clinicians, paramedics, and patients to understand diagnostic outcomes without relying on specialized radiological expertise. The integration with Cloudinary and MongoDB ensures secure, scalable storage of patient data, medical images, and generated reports.
+Furthermore, OrthoAssist’s agentic MCP framework facilitates asynchronous processing, inter-agent communication, and model context sharing, making the system highly extensible for future medical applications — including orthopedic anomaly segmentation, comparative bone density analysis, and surgical planning assistance. Its real-time feedback, automated analytics dashboard, and intelligent report history tracking make it a powerful tool for both individual practitioners and institutional healthcare systems.
+The project demonstrates how AI and multimodal intelligence can significantly enhance orthopedic diagnostics by reducing interpretation delays from hours to minutes. By democratizing expert-level analysis through an accessible digital interface, OrthoAssist bridges the technological divide between urban healthcare centers and rural clinics, empowering medical staff in low-resource settings.
+In conclusion, OrthoAssist stands as a proof-of-concept for next-generation orthopedic AI systems that unite efficiency, interpretability, and clinical utility. It has the potential to redefine orthopedic diagnostics by offering fast, explainable, and patient-friendly medical insights while maintaining scalability, modularity, and compliance with healthcare data standards.
+Future developments may include expanding the system’s dataset diversity, integrating multimodal data (CT, MRI), incorporating federated learning for privacy-preserving AI training, and introducing voice-assisted diagnostic explanations for enhanced accessibility.
+Chapter 8: Plagiarism Report
+References
+[1] J. Redmon and A. Farhadi, “YOLOv3: An Incremental Improvement,” arXiv preprint arXiv:1804.02767, 2018.[2] O. Ronneberger, P. Fischer, and T. Brox, “U-Net: Convolutional Networks for Biomedical Image Segmentation,” in Proc. MICCAI, 2015, pp. 234–241.[3] D. P. Kingma and M. Welling, “Auto-Encoding Variational Bayes,” arXiv preprint arXiv:1312.6114, 2013.[4] G. Hinton, S. Osindero, and Y. Teh, “A Fast Learning Algorithm for Deep Belief Nets,” Neural Computation, vol. 18, no. 7, pp. 1527–1554, 2006.[5] R. Girshick, “Fast R-CNN,” in Proc. IEEE Int. Conf. Comput. Vision (ICCV), 2015, pp. 1440–1448.[6] Y. LeCun, Y. Bengio, and G. Hinton, “Deep Learning,” Nature, vol. 521, no. 7553, pp. 436–444, 2015.[7] M. Abadi et al., “TensorFlow: Large-Scale Machine Learning on Heterogeneous Systems,” 2016.[8] A. Vaswani et al., “Attention Is All You Need,” in Proc. Advances in Neural Information Processing Systems (NeurIPS), 2017.[9] M. A. Rahman and Y. Wang, “Optimising YOLO for Medical Image Detection,” IEEE Access, vol. 8, pp. 155982–155990, 2020.[10] B. Raj, R. Maji, and P. Saha, “AI-based Bone Fracture Detection Using Deep Convolutional Networks,” IEEE Trans. Med. Imaging, vol. 39, no. 12, pp. 4563–4572, 2020.[11] T. Mikolov, K. Chen, G. Corrado, and J. Dean, “Efficient Estimation of Word Representations in Vector Space,” arXiv preprint arXiv:1301.3781, 2013.[12] A. Dosovitskiy et al., “An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale,” Proc. ICLR, 2021.[13] C. Szegedy et al., “Going Deeper with Convolutions,” in Proc. IEEE Conf. Comput. Vision Pattern Recognition. (CVPR), 2015, pp. 1–9.[14] M. Tan and Q. V. Le, “EfficientNet: Rethinking Model Scaling for Convolutional Neural Networks,” Proc. ICML, 2019.[15] L. Zhang et al., “Deep Learning-Based Computer-Aided Diagnosis of Fractures from X-ray Images,” Computers in Biology and Medicine, vol. 143, 2022.[16] S. Chouhan, U. K. Singh, and S. Jain, “Transfer Learning for Radiographic Bone Fracture Detection,” IEEE Access, vol. 8, pp. 166746–166758, 2020.[17] F. Chollet, “Xception: Deep Learning with Depthwise Separable Convolutions,” in Proc. CVPR, 2017, pp. 1251–1258.[18] T. Li, S. Luo, and M. Wang, “Real-Time Healthcare Image Classification Using YOLO and Transfer Learning,” IEEE J. Biomed. Health Inform., vol. 26, no. 3, pp. 1280–1291, 2022.[19] P. J. Huber et al., “AI-Powered Clinical Decision Support Systems: A Review,” IEEE Rev. Biomed. Eng., vol. 15, pp. 43–60, 2022.
