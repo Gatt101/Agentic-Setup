@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query
@@ -9,7 +9,6 @@ from loguru import logger
 import asyncio
 
 from agents.agent_coordinator import agent_coordinator
-from agents.base_agent import BaseAgent, AgentGoal
 
 
 router = APIRouter(tags=["multi_agent"])

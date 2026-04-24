@@ -12,7 +12,6 @@ from uuid import uuid4
 
 from langchain_core.tools import tool
 from loguru import logger
-from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import inch
 from reportlab.platypus import (
@@ -29,8 +28,6 @@ from tools.report.pdf_engine import (
     BORDER,
     DISCLAIMER_TEXT,
     LIGHT_BLUE,
-    NAVY,
-    SLATE,
     TEAL,
     build_branded_header,
     build_styles,

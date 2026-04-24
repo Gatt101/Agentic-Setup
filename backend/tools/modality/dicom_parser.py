@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
 from langchain_core.tools import tool
 
 from tools.modality.dicom_utils import is_dicom, normalize_body_part, read_dicom_metadata
