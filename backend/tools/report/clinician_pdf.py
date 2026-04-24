@@ -32,7 +32,6 @@ from tools.report.pdf_engine import (
     DISCLAIMER_TEXT,
     LIGHT_BLUE,
     NAVY,
-    SLATE,
     TEAL,
     build_branded_header,
     build_styles,
@@ -329,6 +328,5 @@ async def generate_clinician_pdf(
 
 
 __all__ = ["generate_clinician_pdf", "generate_clinician_pdf_impl"]
-
 
 

@@ -30,8 +30,6 @@ from tools.report.pdf_engine import (
     BORDER,
     DISCLAIMER_TEXT,
     LIGHT_BLUE,
-    NAVY,
-    SLATE,
     TEAL,
     build_branded_header,
     build_styles,
