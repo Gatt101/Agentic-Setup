@@ -6,6 +6,16 @@ import Link from "next/link";
 
 import { AppResizableNavbar } from "@/components/layout/AppResizableNavbar";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogClose,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
 import { HeroParallax } from "@/components/ui/hero-parallax";
 import { BoneIcon } from "@/icons/BoneIcon";
 import { HospitalIcon } from "@/icons/HospitalIcon";
@@ -382,7 +392,7 @@ export function LandingPage() {
       <HeroParallax
         products={orthoProducts}
         header={
-          <div className="max-w-7xl relative mx-auto pt-10 pb-20 md:pt-16 md:pb-36 px-6 w-full">
+          <div className="relative z-20 mx-auto w-full max-w-7xl px-6 pt-10 pb-20 md:pt-16 md:pb-36">
             <motion.div
               animate={{ opacity: 1, y: 0 }}
               initial={{ opacity: 0, y: yOffset }}
@@ -421,13 +431,37 @@ export function LandingPage() {
                     Log in
                   </Button>
                 </SignInButton>
-                <Button
-                  asChild
-                  className="h-11 rounded-xl border-slate-300 bg-white/90 px-5 text-sm font-semibold text-slate-800 hover:bg-white dark:border-slate-700 dark:bg-slate-900/90 dark:text-slate-100 dark:hover:bg-slate-800"
-                  variant="outline"
-                >
-                  <Link href="/dashboard/patient/chat">View Demo</Link>
-                </Button>
+                <Dialog>
+                  <DialogTrigger asChild>
+                    <Button
+                      className="h-11 rounded-xl border-slate-300 bg-white/90 px-5 text-sm font-semibold text-slate-800 hover:bg-white dark:border-slate-700 dark:bg-slate-900/90 dark:text-slate-100 dark:hover:bg-slate-800"
+                      type="button"
+                      variant="outline"
+                    >
+                      View Demo
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent className="border-slate-200 bg-white/95 sm:max-w-md dark:border-slate-800 dark:bg-slate-950/95">
+                    <DialogHeader>
+                      <DialogTitle className="text-slate-900 dark:text-slate-100">
+                        Demo Coming Soon
+                      </DialogTitle>
+                      <DialogDescription className="text-slate-600 dark:text-slate-300">
+                        We&apos;ll get a guided OrthoAssist demo to you soon.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <DialogFooter>
+                      <DialogClose asChild>
+                        <Button
+                          className="h-10 rounded-lg px-5 text-sm font-semibold"
+                          type="button"
+                        >
+                          Close
+                        </Button>
+                      </DialogClose>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
               </div>
               <div className="mt-10 grid gap-3 sm:grid-cols-2 max-w-lg">
                 <div className="rounded-xl border border-slate-200 bg-white/80 backdrop-blur-sm px-4 py-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-300">
