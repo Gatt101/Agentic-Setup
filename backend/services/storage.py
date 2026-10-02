@@ -32,7 +32,7 @@ class StorageService:
         self.reports_dir.mkdir(parents=True, exist_ok=True)
 
     def _make_public_url(self, path: Path) -> str:
-        # Returns a URL served by the /storage static mount in main.py
+        # Legacy internal reference. /storage is intentionally not mounted publicly.
         return f"/storage/{path.relative_to(self.root).as_posix()}"
 
     async def save_bytes(self, data: bytes, filename: str, subdir: str = "raw") -> dict[str, str]:
@@ -45,9 +45,35 @@ class StorageService:
 
         return {
             "path": str(file_path),
+            "relative_path": file_path.relative_to(self.root).as_posix(),
             "public_id": file_path.stem,
             "public_url": self._make_public_url(file_path),
         }
+
+    def resolve_private_path(self, reference: str | None) -> Path | None:
+        if not reference:
+            return None
+
+        value = str(reference).strip()
+        if value.startswith("/storage/"):
+            value = value[len("/storage/") :]
+
+        candidate = Path(value)
+        if not candidate.is_absolute():
+            candidate = self.root / candidate
+        resolved = candidate.resolve()
+        try:
+            resolved.relative_to(self.root.resolve())
+        except ValueError:
+            return None
+        return resolved
+
+    async def delete_reference(self, reference: str | None) -> bool:
+        path = self.resolve_private_path(reference)
+        if path is None or not path.is_file():
+            return False
+        path.unlink()
+        return True
 
     async def save_base64_image(
         self,
@@ -72,6 +98,7 @@ class StorageService:
         patient_id: str,
         report_type: str,
         pdf_url: str | None = None,
+        pdf_path: str | None = None,
         report_id: str | None = None,
     ) -> dict[str, str]:
         rid = report_id or uuid4().hex
@@ -82,6 +109,7 @@ class StorageService:
             "report_type": report_type,
             "report_data": report_data,
             "pdf_url": pdf_url,
+            "pdf_path": pdf_path,
             "created_at": timestamp,
         }
 

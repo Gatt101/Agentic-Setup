@@ -29,6 +29,7 @@ const API_BASE_URL =
 
 type DataLoaderOptions = {
   mode?: DataSourceMode;
+  token?: string | null;
 };
 
 function cloneData<T>(value: T): T {
@@ -67,9 +68,10 @@ function shouldUseMockData(options?: DataLoaderOptions): boolean {
   return resolveMode(options) === "mock";
 }
 
-async function fetchApi<T>(path: string): Promise<T> {
+async function fetchApi<T>(path: string, token?: string | null): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     cache: "no-store",
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
   });
 
   if (!response.ok) {
@@ -94,9 +96,9 @@ export async function getDoctorDashboardData(
   }
 
   try {
-    const params = new URLSearchParams({ actor_id: actorId, actor_role: "doctor" });
     const live = await fetchApi<DoctorDashboardApiResponse>(
-      `/dashboard/doctor/overview?${params}`
+      "/dashboard/doctor/overview",
+      options?.token,
     );
 
     const summary: DashboardMetric[] = Array.isArray(live.summary)
@@ -158,8 +160,7 @@ export async function getDoctorPatients(
   }
 
   try {
-    const params = new URLSearchParams({ actor_id: actorId, actor_role: "doctor" });
-    const raw = await fetchApi<Record<string, unknown>[]>(`/patients?${params}`);
+    const raw = await fetchApi<Record<string, unknown>[]>("/patients", options?.token);
     return raw.map((p) => ({
       id: String(p.id ?? ""),
       name: String(p.name ?? "Unknown"),
@@ -183,8 +184,7 @@ export async function getDoctorReports(
   }
 
   try {
-    const params = new URLSearchParams({ actor_id: actorId, actor_role: "doctor" });
-    const raw = await fetchApi<Record<string, unknown>[]>(`/reports/list?${params}`);
+    const raw = await fetchApi<Record<string, unknown>[]>("/reports/list", options?.token);
     return raw.map((r) => ({
       id: String(r.id ?? ""),
       patientName: String(r.patientName ?? "Unknown"),
@@ -209,8 +209,7 @@ export async function getPatientReports(
   }
 
   try {
-    const params = new URLSearchParams({ actor_id: actorId, actor_role: "patient" });
-    const raw = await fetchApi<Record<string, unknown>[]>(`/reports/list?${params}`);
+    const raw = await fetchApi<Record<string, unknown>[]>("/reports/list", options?.token);
     return raw.map((r) => ({
       id: String(r.id ?? ""),
       patientName: String(r.patientName ?? "You"),

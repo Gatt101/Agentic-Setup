@@ -2,21 +2,19 @@ from contextlib import asynccontextmanager
 import sys
 
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
 from api.middleware import setup_middleware
 from api.router import api_router
 from core.config import settings
 from core.logging import configure_logging
-from services.agent_learning import adaptive_supervisor
 from services.mongo import mongo_service
-from services.probabilistic_reasoning import bayesian_updater
 from services.storage import storage_service
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):  # noqa: ARG001
+    settings.validate_security_configuration()
     if sys.version_info < (3, 11) or sys.version_info >= (3, 12):
         logger.error(
             "Unsupported Python runtime detected: {}.{}.{} . Use backend/.venv (Python 3.11.x).",
@@ -28,8 +26,6 @@ async def lifespan(app: FastAPI):  # noqa: ARG001
     logger.info("Environment: {} | Base URL: {} | Frontend: {}", settings.app_env, settings.resolved_server_base_url, settings.frontend_url)
     await storage_service.initialize()
     await mongo_service.initialize()
-    await adaptive_supervisor.ensure_initialized()
-    await bayesian_updater.ensure_initialized()
     logger.info("OrthoAssist startup complete. Storage and MongoDB ready.")
     yield
     await mongo_service.close()
@@ -47,13 +43,6 @@ def create_app() -> FastAPI:
 
     setup_middleware(app)
     app.include_router(api_router, prefix="/api")
-
-    # Serve locally-stored PDFs and images at /storage/<subpath>
-    app.mount(
-        "/storage",
-        StaticFiles(directory=str(settings.resolved_storage_path), check_dir=False),
-        name="storage",
-    )
 
     return app
 

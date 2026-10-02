@@ -1,11 +1,10 @@
 import type { ReactNode } from "react";
 import { auth } from "@clerk/nextjs/server";
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { DashboardShell } from "../../components/layout/DashboardShell";
-import { ROLE_COOKIE_NAME, ROLE_SELECTION_ROUTE } from "../../lib/constants";
-import { getRoleFromSessionClaims, parseRole } from "../../lib/rbac";
+import { ROLE_SELECTION_ROUTE } from "../../lib/constants";
+import { getRoleFromSessionClaims } from "../../lib/rbac";
 
 export default async function DashboardLayout({
   children,
@@ -21,16 +20,14 @@ export default async function DashboardLayout({
   const role = getRoleFromSessionClaims(
     sessionClaims as Record<string, unknown> | undefined
   );
-  const cookieStore = await cookies();
-  const cookieRole = parseRole(cookieStore.get(ROLE_COOKIE_NAME)?.value);
-  const resolvedRole = role ?? cookieRole;
+  const resolvedRole = role;
 
-  if (!resolvedRole) {
+  if (resolvedRole !== "doctor") {
     redirect(ROLE_SELECTION_ROUTE);
   }
 
   return (
-    <DashboardShell role={resolvedRole} userId={userId}>
+    <DashboardShell role={resolvedRole}>
       {children}
     </DashboardShell>
   );

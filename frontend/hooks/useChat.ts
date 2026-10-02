@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useAuth } from "@clerk/nextjs";
 
 export type ChatRole = "assistant" | "user";
 
@@ -68,9 +69,6 @@ type TraceApiResponse = {
 };
 
 type UseChatOptions = {
-  actorId: string;
-  actorName?: string | null;
-  actorRole: "doctor" | "patient";
   initialChatId?: string | null;
   openingMessage: string;
   patientId?: string | null;
@@ -80,6 +78,7 @@ type SendMessageInput = {
   attachment?: string | null;
   attachments?: string[] | null;
   attachmentMeta?: ChatAttachment | null;
+  deidentifiedConfirmed?: boolean;
   isVolumetric?: boolean;
   text: string;
 };
@@ -145,7 +144,8 @@ function toChatMessage(record: ChatMessageRecord): ChatMessage {
   };
 }
 
-export function useChat({ actorId, actorName, actorRole, initialChatId, openingMessage, patientId }: UseChatOptions) {
+export function useChat({ initialChatId, openingMessage, patientId }: UseChatOptions) {
+  const { getToken } = useAuth();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [liveTrace, setLiveTrace] = useState<AgentTraceStep[]>([]);
@@ -176,10 +176,12 @@ export function useChat({ actorId, actorName, actorRole, initialChatId, openingM
       }
 
       try {
-        const response = await fetch(
-          `${API_BASE_URL}/chat/sessions/${chatId}/messages?actor_id=${encodeURIComponent(actorId)}&actor_role=${encodeURIComponent(actorRole)}`,
-          { cache: "no-store" }
-        );
+        const token = await getToken();
+        if (!token) throw new Error("Authentication required.");
+        const response = await fetch(`${API_BASE_URL}/chat/sessions/${chatId}/messages`, {
+          cache: "no-store",
+          headers: { Authorization: `Bearer ${token}` },
+        });
         if (!response.ok) {
           throw new Error("Failed to load chat history.");
         }
@@ -193,7 +195,7 @@ export function useChat({ actorId, actorName, actorRole, initialChatId, openingM
     };
 
     void load();
-  }, [actorId, actorRole, chatId, isLoading, openingMessage]);
+  }, [chatId, getToken, isLoading, openingMessage]);
 
   const appendAssistantMessage = useCallback(
     (content: string, attachment?: ChatAttachment, trace?: AgentTraceStep[]) => {
@@ -216,15 +218,17 @@ export function useChat({ actorId, actorName, actorRole, initialChatId, openingM
       return chatId;
     }
 
+    const token = await getToken();
+    if (!token) throw new Error("Authentication required.");
     const response = await fetch(`${API_BASE_URL}/chat/sessions`, {
       body: JSON.stringify({
-        actor_id: actorId,
-        actor_name: actorName ?? undefined,
-        actor_role: actorRole,
         patient_id: patientId ?? undefined,
         title: deriveChatTitle(preferredTitle),
       }),
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
       method: "POST",
     });
 
@@ -244,10 +248,17 @@ export function useChat({ actorId, actorName, actorRole, initialChatId, openingM
     const payload = (await response.json()) as ChatSessionCreateResponse;
     setChatId(payload.chat_id);
     return payload.chat_id;
-  }, [actorId, actorRole, chatId, patientId]);
+  }, [chatId, getToken, patientId]);
 
   const sendMessage = useCallback(
-    async ({ text: rawText, attachment, attachments, attachmentMeta, isVolumetric }: SendMessageInput) => {
+    async ({
+      text: rawText,
+      attachment,
+      attachments,
+      attachmentMeta,
+      deidentifiedConfirmed,
+      isVolumetric,
+    }: SendMessageInput) => {
       const text = rawText.trim();
       const normalizedAttachments = (attachments ?? []).filter(
         (value): value is string => typeof value === "string" && value.length > 0
@@ -283,10 +294,12 @@ export function useChat({ actorId, actorName, actorRole, initialChatId, openingM
 
       const pollTrace = async () => {
         try {
-          const traceResponse = await fetch(
-            `${API_BASE_URL}/chat/sessions/${currentChatId}/trace?actor_id=${encodeURIComponent(actorId)}&actor_role=${encodeURIComponent(actorRole)}`,
-            { cache: "no-store" }
-          );
+          const token = await getToken();
+          if (!token) return;
+          const traceResponse = await fetch(`${API_BASE_URL}/chat/sessions/${currentChatId}/trace`, {
+            cache: "no-store",
+            headers: { Authorization: `Bearer ${token}` },
+          });
           if (!traceResponse.ok) {
             return;
           }
@@ -305,19 +318,21 @@ export function useChat({ actorId, actorName, actorRole, initialChatId, openingM
       void pollTrace();
 
       try {
+        const token = await getToken();
+        if (!token) throw new Error("Authentication required.");
         const response = await fetch(`${API_BASE_URL}/chat/sessions/${currentChatId}/messages`, {
           body: JSON.stringify({
-            actor_id: actorId,
-            actor_name: actorName ?? undefined,
-            actor_role: actorRole,
             attachment: attachment ?? undefined,
-            attachments: normalizedAttachments.length > 0 ? normalizedAttachments : undefined,
+            deidentified_confirmed: Boolean(attachment && deidentifiedConfirmed),
             message: text || "Please analyze the attached file.",
             patient_id: patientId ?? undefined,
             session_id: currentChatId,
           }),
           cache: "no-store",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
           method: "POST",
           signal: controller.signal,
         });
@@ -377,7 +392,7 @@ export function useChat({ actorId, actorName, actorRole, initialChatId, openingM
         setIsLoading(false);
       }
     },
-    [actorId, actorRole, appendAssistantMessage, ensureChatSession, isLoading, patientId]
+    [appendAssistantMessage, ensureChatSession, getToken, isLoading, patientId]
   );
 
   const stop = useCallback(() => {

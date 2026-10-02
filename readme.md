@@ -1,235 +1,122 @@
 # OrthoAssist
 
-An AI-powered orthopedic diagnostic platform. Doctors upload X-rays, the agentic backend runs YOLOv8 detection, invokes clinical reasoning tools via LangGraph, and returns structured reports. Patients and doctors interact through a role-aware chat interface backed by the same agent graph.
+**Doctor-reviewed orthopedic X-ray reports, drafted faster.**
 
----
+Upload a deidentified hand/wrist or leg/ankle X-ray, add clinical context, and review an AI-assisted structured report.
 
-## Architecture
+> For clinician review only. Not for emergency use or autonomous diagnosis.
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         CLIENT LAYER                             │
-│       Next.js Frontend      │    Claude Desktop / Cursor IDE     │
-└──────────────┬──────────────┴──────────────┬────────────────────┘
-               │ HTTP / REST                  │ MCP Protocol
-               ▼                              ▼
-┌──────────────────────┐    ┌────────────────────────────────────┐
-│   FastAPI  (:8000)   │    │   MCP Server (stdio / SSE)         │
-│   /api/analyze       │    │   22 tools via @mcp.tool()         │
-│   /api/chat          │    │   Namespaced: vision.* clinical.*  │
-│   /api/reports       │    └──────────────┬─────────────────────┘
-│   /api/patients      │                   │
-└──────────┬───────────┘                   │
-           │             both call          │
-           ▼                               ▼
-┌──────────────────────────────────────────────────────────────┐
-│                    LangGraph  StateGraph                      │
-│   Supervisor  →  Tool Executor  →  Response Builder          │
-│         ↑               │                                    │
-│   sub-agents:  vision · clinical · knowledge                 │
-│                report  · hospital                            │
-└──────────────────────────────────────────────────────────────┘
-           │
-           ▼
-  YOLOv8 detection · RAG (knowledge base) · MongoDB · Cloudinary
-```
+## Pilot Scope
 
----
+OrthoAssist currently targets licensed orthopedic clinicians at a small Indian clinic. The live workflow is intentionally narrow:
 
-## Tech Stack
+1. A manually provisioned doctor signs in with Clerk.
+2. OrthoAssist creates or selects a deidentified case code.
+3. The doctor confirms that one PNG/JPEG X-ray is deidentified and uploads it.
+4. The doctor adds clinical context.
+5. The existing hand or leg YOLO model supplies observations to the agent workflow.
+6. OrthoAssist creates an editable, doctor-reviewed draft.
+7. The doctor downloads the protected `clinician_simple_pdf` report.
 
-### Backend
-| Layer | Technology |
-|---|---|
-| API server | FastAPI + Uvicorn |
-| Agent orchestration | LangGraph + LangChain |
-| LLM | OpenAI GPT-4o / GPT-4o-mini |
-| Observability | LangSmith |
-| MCP server | Python MCP SDK |
-| Computer vision | YOLOv8 (Ultralytics) — separate hand & leg models |
-| Database | MongoDB (Motor async driver) |
-| Storage | Local filesystem or Cloudinary |
-| Report generation | ReportLab PDF |
-| Auth utils | python-jose + passlib |
+Do not use real patient identifiers in the pilot. Name, date of birth, phone, email, patient accounts, emergency workflows, automated diagnosis, CT/MRI/DICOM, and third-party imaging APIs are out of scope.
 
-### Frontend
-| Layer | Technology |
-|---|---|
-| Framework | Next.js 14 (App Router) |
-| Auth | Clerk |
-| UI components | shadcn/ui + Radix UI + Tailwind CSS |
-| State | Zustand + TanStack Query |
-| Animations | Framer Motion |
-| Icons | Lucide React + Tabler Icons |
-| Streaming | Vercel AI SDK |
+## Live Surface
 
----
+Only these API surfaces are registered:
 
-## Features
-
-- **X-ray Analysis** — Upload hand or leg X-rays; YOLO detects anatomical regions, the supervisor agent selects the right clinical tools and returns a triage result.
-- **Agentic Chat** — Persistent, session-scoped chat backed by LangGraph. The LLM decides which tools to call; no hardcoded pipeline.
-- **Role-based Dashboard** — Doctor and patient roles enforced at the middleware level via Clerk session claims. Each role sees only its permitted routes and data.
-- **Patient Management** — Doctors can create and view patient records.
-- **Report Generation** — Structured PDF reports generated from agent output, stored in MongoDB and retrievable from the dashboard.
-- **MCP Server** — All 22 tools are also exposed as an MCP server, making them callable from Claude Desktop, Cursor, or any MCP-compatible client.
-- **LangSmith Tracing** — Every agent run is traced: node decisions, tool calls, token counts, and latency.
-
----
-
-## Project Structure
-
-```
-OrthoAssist/
-├── backend/
-│   ├── main.py                  # FastAPI app factory + lifespan
-│   ├── core/                    # Config (pydantic-settings), logging, exceptions
-│   ├── api/
-│   │   ├── router.py            # Mounts all endpoint routers
-│   │   ├── middleware.py        # CORS, request logging
-│   │   ├── endpoints/           # analyze, chat, health, knowledge, metrics, reports, patients
-│   │   └── schemas/             # Pydantic request/response models
-│   ├── graph/
-│   │   ├── graph.py             # LangGraph StateGraph definition
-│   │   ├── state.py             # Shared AgentState TypedDict
-│   │   ├── checkpointer.py      # MemorySaver session checkpointing
-│   │   └── nodes/               # supervisor, tool_executor, response_builder, error_handler
-│   ├── agents/                  # Sub-agent wrappers: vision, clinical, knowledge, report, hospital
-│   ├── tools/                   # Pure async tool implementations (clinical/, vision/, report/, ...)
-│   ├── mcp/
-│   │   ├── server.py            # MCP server entry point
-│   │   └── registry.py          # Tool registration
-│   ├── services/                # mongo, storage, rag_store, chat_store, session, patient_store
-│   └── models/                  # hand_yolo.pt, leg_yolo.pt
-│
-└── frontend/
-    ├── app/                     # Next.js App Router pages
-    │   ├── (auth)/              # Clerk sign-in / sign-up
-    │   ├── select-role/         # Role selection after first login
-    │   └── dashboard/
-    │       ├── doctor/          # patients, reports, chat, settings
-    │       └── patient/         # reports, chat, nearby hospitals
-    ├── components/              # chat, upload, reports, patients, landing, layout, ui
-    ├── hooks/                   # useChat, useReports, usePatients
-    ├── lib/                     # api client, auth, RBAC helpers, validators
-    └── store/                   # Zustand UI store
-```
-
----
-
-## Getting Started
-
-### Prerequisites
-
-- Python 3.11+
-- Node.js 20+
-- MongoDB instance (local or Atlas)
-- OpenAI API key
-- Clerk account (for frontend auth)
-
-### Backend
-
-```bash
-cd backend
-
-# create and activate virtual environment
-python -m venv .venv
-.venv\Scripts\activate          # Windows
-source .venv/bin/activate       # macOS / Linux
-
-# install dependencies
-pip install -r requirements.txt
-
-# copy and fill in environment variables
-cp .env.example .env
-
-# run
-uvicorn main:app --reload
-# → http://localhost:8000
-# → http://localhost:8000/docs  (Swagger UI)
-```
-
-### Frontend
-
-```bash
-cd frontend
-
-npm install
-
-# copy and fill in environment variables
-cp .env.example .env.local
-
-npm run dev
-# → http://localhost:3000
-```
-
----
-
-## Environment Variables
-
-### Backend (`backend/.env`)
-
-| Variable | Description |
-|---|---|
-| `APP_ENV` | `dev` or `production` |
-| `OPENAI_API_KEY` | OpenAI key for the supervisor LLM |
-| `SUPERVISOR_LLM` | Model name, default `gpt-4o` |
-| `FAST_LLM` | Faster model for cheaper tasks, default `gpt-4o-mini` |
-| `LANGCHAIN_API_KEY` | LangSmith API key |
-| `LANGCHAIN_PROJECT` | LangSmith project name |
-| `MONGODB_URI` | MongoDB connection string |
-| `MONGODB_DB_NAME` | Database name, default `orthoassist` |
-| `STORAGE_TYPE` | `local` or `cloudinary` |
-| `CLOUDINARY_URL` | Required when `STORAGE_TYPE=cloudinary` |
-| `SECRET_KEY` | JWT signing secret |
-| `FRONTEND_URL` | Allowed CORS origin in production |
-
-### Frontend (`frontend/.env.local`)
-
-| Variable | Description |
-|---|---|
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | Clerk publishable key |
-| `CLERK_SECRET_KEY` | Clerk secret key |
-| `NEXT_PUBLIC_API_BASE_URL` | Backend URL, default `http://localhost:8000` |
-| `NEXT_PUBLIC_DATA_SOURCE` | `mock` (dev) or `api` (production) |
-
----
-
-## API Overview
-
-| Method | Path | Description |
+| Method | Path | Access |
 |---|---|---|
-| `POST` | `/api/analyze` | Upload X-ray image, run full agent analysis |
-| `POST` | `/api/chat` | Send message to agent graph (streaming) |
-| `GET` | `/api/reports` | List reports for current session |
-| `GET` | `/api/reports/{id}` | Fetch single report |
-| `GET` | `/api/patients` | List patients (doctor only) |
-| `POST` | `/api/patients` | Create patient record |
-| `GET` | `/api/knowledge` | Query the orthopedic knowledge base (RAG) |
-| `GET` | `/api/health` | Health check |
-| `GET` | `/api/metrics` | Agent run metrics |
+| `GET` | `/api/health` | Public |
+| `GET` | `/api/dashboard/doctor` | Doctor token |
+| `GET/DELETE` | `/api/patients...` | Owning doctor token |
+| `GET/POST` | `/api/chat/sessions...` | Owning doctor token |
+| `GET` | `/api/reports/list` | Doctor token |
+| `GET` | `/api/reports/{report_id}` | Owning doctor token |
+| `GET` | `/api/reports/{report_id}/pdf` | Owning doctor token |
 
-Full interactive docs available at `http://localhost:8000/docs` when running locally.
+Experimental analysis, CT/MRI/DICOM, nearby care, knowledge ingestion, feedback learning, metrics, and multi-agent modules remain in source but are not mounted by `backend/api/router.py`.
 
----
+## Security Baseline
 
-## Agent Tools (22 total)
+- Every live endpoint except health requires a Clerk bearer session token.
+- The backend verifies RS256, issuer, expiration, `nbf`, authorized party (`azp`), subject, and the server-controlled `role` claim.
+- Submitted identity fields, role cookies, and Clerk unsafe metadata are not authorization inputs.
+- Case, chat, and report access is checked against the authenticated doctor ID.
+- Local storage is not statically mounted. Report files are streamed only through the owner-checked API route.
+- Uploads accept one strict base64 PNG/JPEG, up to 20 MiB decoded and 64 megapixels. URLs, PDFs, archives, DICOM, malformed images, and multiple attachments are rejected.
+- FastAPI rejects request bodies over 30 MiB.
+- Production startup rejects wildcard CORS and missing Clerk or MongoDB security configuration.
 
-| Namespace | Tools |
-|---|---|
-| `vision.*` | `detect_xray_region`, `classify_fracture`, `annotate_image`, `route_by_body_part` |
-| `clinical.*` | `triage_severity`, `suggest_treatment`, `flag_contraindications`, `differential_diagnosis` |
-| `knowledge.*` | `search_ortho_kb`, `retrieve_drug_info`, `lookup_icd_code` |
-| `report.*` | `generate_pdf_report`, `summarize_findings`, `format_for_ehr` |
-| `hospital.*` | `find_nearby_hospitals`, `check_specialist_availability`, `get_emergency_contacts` |
+## Stack
 
-All tools are registered on both the LangGraph tool executor and the MCP server.
+- Backend: Python 3.11, FastAPI, LangGraph, python-jose, MongoDB, Pillow, Ultralytics YOLO, ReportLab
+- Frontend: Next.js App Router, Clerk, TypeScript, Tailwind CSS
+- Models: existing `backend/models/hand_yolo.pt` and `backend/models/leg_yolo.pt`
 
----
+## Setup
 
-## Development Notes
+### Backend
 
-- **LangSmith tracing** is on by default in dev. Set `LANGCHAIN_TRACING_V2=false` to disable.
-- **Mock data mode**: set `NEXT_PUBLIC_DATA_SOURCE=mock` in `.env.local` to run the frontend without a live backend.
-- **YOLO models** (`hand_yolo.pt`, `leg_yolo.pt`) must be present in `backend/models/`. They are not tracked in git due to size.
-- Session memory uses LangGraph `MemorySaver` with a TTL of 1 hour (`SESSION_TTL_SECONDS=3600`).
+Install and pin the supported runtime with `uv`:
+
+```powershell
+cd backend
+uv python install 3.11
+uv sync --python 3.11
+Copy-Item .env.example .env
+.\.venv\Scripts\python.exe -m uvicorn main:app --reload
+```
+
+Set at least these values in `backend/.env`:
+
+```dotenv
+APP_ENV=dev
+FRONTEND_URL=http://localhost:3000
+CORS_ALLOW_ORIGINS=http://localhost:3000
+OPENAI_API_KEY=...
+MONGODB_URI=...
+MONGODB_DB_NAME=orthoassist
+CLERK_JWT_KEY="-----BEGIN PUBLIC KEY-----\\n...\\n-----END PUBLIC KEY-----"
+CLERK_ISSUER=https://your-instance.clerk.accounts.dev
+CLERK_AUTHORIZED_PARTIES=http://localhost:3000
+```
+
+### Clerk Doctor Provisioning
+
+Self-service role selection is disabled. Provision each pilot clinician manually:
+
+1. In the Clerk dashboard, set the user's public metadata to `{"role":"doctor"}`.
+2. Under session token customization, add the top-level claim `{"role":"{{user.public_metadata.role}}"}`.
+3. Configure `CLERK_ISSUER` and the PEM public key for the same Clerk instance.
+4. Add every legitimate frontend origin to `CLERK_AUTHORIZED_PARTIES` and `CORS_ALLOW_ORIGINS` as comma-separated values.
+5. Sign out and back in after changing metadata so Clerk issues a new session token.
+
+Do not accept role changes from browser forms, cookies, or unsafe metadata.
+
+### Frontend
+
+```powershell
+cd frontend
+npm install
+Copy-Item .env.example .env.local
+npm run dev
+```
+
+`NEXT_PUBLIC_API_BASE_URL` must include the `/api` prefix, for example `http://localhost:8000/api`.
+
+## Verification
+
+```powershell
+cd backend
+.\.venv\Scripts\python.exe -m pytest -q
+
+cd ..\frontend
+npm run typecheck
+npm run lint
+```
+
+## Pilot Data Cleanup
+
+Case deletion removes linked MongoDB records and local X-rays/PDFs. There is no automated retention worker in this sprint. Record the pilot end date and, within 30 days, have the clinic operator delete every pilot case through the doctor dashboard and verify that the MongoDB case collections and `backend/storage` contain no pilot records. Keep a dated checklist of that manual verification.
+
+Real patient data requires a separate DPDP operational, consent, retention, breach-response, and vendor review before use.

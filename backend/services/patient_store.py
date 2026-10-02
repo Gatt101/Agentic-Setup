@@ -155,10 +155,17 @@ class PatientStore:
             },
         )
 
-    async def get_patient(self, patient_id: str) -> dict[str, Any] | None:
+    async def get_patient(
+        self,
+        patient_id: str,
+        doctor_user_id: str | None = None,
+    ) -> dict[str, Any] | None:
         await self.ensure_enabled()
+        query: dict[str, Any] = {"patient_id": patient_id}
+        if doctor_user_id:
+            query["doctor_user_id"] = doctor_user_id
         return await mongo_service.db.patients.find_one(
-            {"patient_id": patient_id}, {"_id": 0}
+            query, {"_id": 0}
         )
 
     async def list_by_doctor(
@@ -208,7 +215,7 @@ class PatientStore:
         patient_id: str,
         actor_id: str,
         actor_role: str,
-    ) -> dict[str, int]:
+    ) -> dict[str, Any]:
         """Delete a patient and linked records visible to the caller."""
         await self.ensure_enabled()
 
@@ -233,6 +240,14 @@ class PatientStore:
                 "deleted_kb_chunks": 0,
             }
 
+        report_files = [
+            row.get("pdf_path") or row.get("pdf_url")
+            async for row in mongo_service.db.reports.find(
+                {"patient_id": patient_id}, {"_id": 0, "pdf_path": 1, "pdf_url": 1}
+            )
+            if row.get("pdf_path") or row.get("pdf_url")
+        ]
+
         deleted_patient = await mongo_service.db.patients.delete_one(scoped_query)
         deleted_reports = await mongo_service.db.reports.delete_many({"patient_id": patient_id})
         deleted_assignments = await mongo_service.db.doctor_patient_assignments.delete_many({"patient_id": patient_id})
@@ -251,6 +266,14 @@ class PatientStore:
         deleted_messages = 0
         deleted_traces = 0
         if chat_ids:
+            attachment_files = [
+                row.get("attachment_data_url")
+                async for row in mongo_service.db.chat_messages.find(
+                    {"chat_id": {"$in": chat_ids}},
+                    {"_id": 0, "attachment_data_url": 1},
+                )
+                if row.get("attachment_data_url")
+            ]
             session_result = await mongo_service.db.chat_sessions.delete_many(
                 {"chat_id": {"$in": chat_ids}}
             )
@@ -263,6 +286,8 @@ class PatientStore:
             deleted_sessions = int(session_result.deleted_count or 0)
             deleted_messages = int(messages_result.deleted_count or 0)
             deleted_traces = int(traces_result.deleted_count or 0)
+        else:
+            attachment_files = []
 
         return {
             "deleted_patients": int(deleted_patient.deleted_count or 0),
@@ -273,6 +298,7 @@ class PatientStore:
             "deleted_traces": deleted_traces,
             "deleted_kb_documents": int(deleted_kb_documents.deleted_count or 0),
             "deleted_kb_chunks": int(deleted_kb_chunks.deleted_count or 0),
+            "file_references": [*report_files, *attachment_files],
         }
 
     async def save_report(
@@ -284,6 +310,7 @@ class PatientStore:
         severity: str,
         doctor_user_id: str | None = None,
         report_id: str | None = None,
+        pdf_path: str | None = None,
     ) -> dict[str, Any]:
         """Persist a generated PDF report to the reports collection."""
         await self.ensure_enabled()
@@ -293,15 +320,34 @@ class PatientStore:
             "report_id": rid,
             "patient_id": patient_id,
             "patient_name": patient_name,
-            "pdf_url": pdf_url,
+            "pdf_url": f"/api/reports/{rid}/pdf",
+            "pdf_path": pdf_path,
             "title": title or "Orthopedic Analysis Report",
             "severity": (severity or "GREEN").upper(),
-            "status": "finalized",
+            "status": "draft",
             "doctor_user_id": doctor_user_id,
             "created_at": now,
         }
         await mongo_service.db.reports.insert_one(doc)
         return {k: v for k, v in doc.items() if k != "_id"}
+
+    async def get_report_for_doctor(
+        self,
+        report_id: str,
+        doctor_user_id: str,
+    ) -> dict[str, Any] | None:
+        await self.ensure_enabled()
+        return await mongo_service.db.reports.find_one(
+            {"report_id": report_id, "doctor_user_id": doctor_user_id},
+            {"_id": 0},
+        )
+
+    async def get_report(self, report_id: str) -> dict[str, Any] | None:
+        await self.ensure_enabled()
+        return await mongo_service.db.reports.find_one(
+            {"report_id": report_id},
+            {"_id": 0},
+        )
 
     async def list_reports_by_doctor(
         self, doctor_user_id: str

@@ -15,9 +15,10 @@ export default async function DoctorHomePage({
 }) {
   const params = searchParams ? await searchParams : {};
   const mode = resolveDataSourceMode(params[DATA_MODE_QUERY_PARAM]);
-  const { userId } = await auth();
+  const { getToken, userId } = await auth();
+  const token = await getToken();
 
-  const data = await getDoctorDashboardData(userId ?? undefined, { mode });
+  const data = await getDoctorDashboardData(userId ?? undefined, { mode, token });
   const dataSourceLabel = getDataSourceLabel({ mode });
 
   return <DoctorDashboardOverview data={data} dataSourceLabel={dataSourceLabel} />;

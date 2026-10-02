@@ -13,7 +13,7 @@ import { type ChatAttachment, useChat } from "@/hooks/useChat";
 import { useUser } from "@clerk/nextjs";
 import { MessageCircleIcon } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import {
     Reasoning,
@@ -45,14 +45,10 @@ function buildOpeningMessage(mode: ChatWindowMode, name?: string | null): string
 
   if (mode === "doctor") {
     return (
-      `${salutation} I'm **OrthoAssist**, your AI-powered orthopedic assistant.\n\n` +
-      `Before we start, please share your **patient's details** so I can personalise the analysis and include them in any generated reports:\n\n` +
-      `- **Full Name**\n` +
-      `- **Age**\n` +
-      `- **Gender** (Male / Female / Other)\n\n` +
-      `You can type them in one go, e.g.:\n` +
-      `> *Name: John Smith, Age: 45, Gender: Male*\n\n` +
-      `Once you've shared those, upload an X-ray or describe the case and I'll begin the analysis!`
+      `${salutation} This workspace accepts one **deidentified PNG or JPEG X-ray** per case.\n\n` +
+      `Upload a hand/wrist or leg/ankle image and add the clinical context. ` +
+      `Model observations are research-grade assistance and require clinician review. ` +
+      `Do not include names, dates of birth, phone numbers, or email addresses.`
     );
   }
 
@@ -233,7 +229,9 @@ function formatTraceForReasoning(step: AgentTraceStep): string {
   return JSON.stringify(step);
 }
 
-export function ChatWindow({ actorId, mode, patientId }: ChatWindowProps) {
+export function ChatWindow({ mode, patientId }: ChatWindowProps) {
+  const [deidentifiedConfirmed, setDeidentifiedConfirmed] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const router = useRouter();
   const searchParams = useSearchParams();
   const currentChatId = searchParams.get("chat_id");
@@ -242,9 +240,6 @@ export function ChatWindow({ actorId, mode, patientId }: ChatWindowProps) {
   const patientIdFromQuery = searchParams.get("patient_id") || undefined;
 
   const { chatId, messages, isLoading, liveTrace, error, sendMessage, stop } = useChat({
-    actorId,
-    actorRole: mode,
-    actorName: actorName ?? undefined,
     initialChatId: currentChatId,
     openingMessage: buildOpeningMessage(mode, actorName),
     patientId: patientId ?? patientIdFromQuery,
@@ -260,11 +255,17 @@ export function ChatWindow({ actorId, mode, patientId }: ChatWindowProps) {
   }, [chatId, currentChatId, router, searchParams]);
 
   const handleSend = async (message: PromptInputMessage) => {
+    if (message.files.length > 0 && !deidentifiedConfirmed) {
+      setUploadError("Confirm that the image is deidentified before uploading.");
+      return;
+    }
+    setUploadError(null);
     const attachmentSelection = await pickAttachmentPayload(message.files);
     void sendMessage({
       attachment: attachmentSelection.payload,
       attachments: attachmentSelection.payloads,
       attachmentMeta: attachmentSelection.preview,
+      deidentifiedConfirmed,
       isVolumetric: attachmentSelection.isVolumetric,
       text: message.text,
     });
@@ -331,6 +332,19 @@ export function ChatWindow({ actorId, mode, patientId }: ChatWindowProps) {
       </Card>
 
       <Card className="shrink-0 border-slate-200/90 bg-white/95 p-1.5 shadow-[0_10px_24px_rgba(15,23,42,0.06)] dark:border-slate-800 dark:bg-slate-950/80 dark:shadow-[0_10px_24px_rgba(2,8,23,0.45)]">
+        <label className="flex items-start gap-2 px-3 py-2 text-xs text-slate-600 dark:text-slate-300">
+          <input
+            checked={deidentifiedConfirmed}
+            className="mt-0.5 h-4 w-4"
+            onChange={(event) => setDeidentifiedConfirmed(event.target.checked)}
+            type="checkbox"
+          />
+          I confirm uploaded X-rays contain no name, date of birth, phone number,
+          email address, or other direct patient identifier.
+        </label>
+        {uploadError ? (
+          <p className="px-3 pb-2 text-xs text-red-600 dark:text-red-400">{uploadError}</p>
+        ) : null}
         <ChatInput
           disabled={isLoading}
           isSubmitting={isLoading}

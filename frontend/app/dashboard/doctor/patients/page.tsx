@@ -12,8 +12,9 @@ export default async function DoctorPatientsPage({
 }) {
   const params = searchParams ? await searchParams : {};
   const mode = resolveDataSourceMode(params[DATA_MODE_QUERY_PARAM]);
-  const { userId } = await auth();
-  const patients = await getDoctorPatients(userId ?? undefined, { mode });
+  const { getToken, userId } = await auth();
+  const token = await getToken();
+  const patients = await getDoctorPatients(userId ?? undefined, { mode, token });
 
   return (
     <main className="space-y-4 p-6">
@@ -26,7 +27,7 @@ export default async function DoctorPatientsPage({
         </p>
       </div>
 
-      <DoctorPatientsPanel actorId={userId ?? ""} initialPatients={patients} />
+      <DoctorPatientsPanel initialPatients={patients} />
     </main>
   );
 }

@@ -81,7 +81,7 @@ def _build_simple_doctor_report(
     patient_gender = str(metadata.get("patient_gender") or "N/A").capitalize()
 
     story: list = []
-    story += build_branded_header("Physician Summary Report", report_id, styles)
+    story += build_branded_header("AI-Assisted Physician Draft", report_id, styles)
 
     # ── 1. Patient & Physician Info ──────────────────────────────────────────
     story += section_heading("Patient & Physician Information", styles, "1")
@@ -210,10 +210,19 @@ async def generate_clinician_simple_pdf_impl(
     await storage_service.save_report(
         report_data={"diagnosis": diagnosis, "triage": triage, "metadata": metadata,
                      "recommendations": recommendations, "detections": detections},
-        patient_id=patient_id, report_type="clinician_simple_pdf", pdf_url=pdf_url, report_id=report_id,
+        patient_id=patient_id,
+        report_type="clinician_simple_pdf",
+        pdf_url=pdf_url,
+        pdf_path=saved["relative_path"],
+        report_id=report_id,
     )
 
-    return {"pdf_base64": base64.b64encode(pdf_bytes).decode("ascii"), "pdf_url": pdf_url, "report_id": report_id}
+    return {
+        "pdf_base64": base64.b64encode(pdf_bytes).decode("ascii"),
+        "pdf_url": pdf_url,
+        "pdf_path": saved["relative_path"],
+        "report_id": report_id,
+    }
 
 
 @tool("report_generate_clinician_simple_pdf")
