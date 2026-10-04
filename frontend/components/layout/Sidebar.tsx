@@ -5,11 +5,11 @@ import {
     FileText,
     LayoutDashboard,
     LogOut,
-    MapPin,
     MessageSquare,
     Settings,
     Users,
 } from "lucide-react";
+import { useAuth } from "@clerk/nextjs";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
@@ -28,7 +28,6 @@ import { cn } from "@/lib/utils";
 
 type SidebarProps = {
   role: AppRole;
-  userId: string;
 };
 
 type ChatSessionSummary = {
@@ -66,29 +65,6 @@ const doctorLinks = [
   },
 ];
 
-const patientLinks = [
-  {
-    label: "Dashboard",
-    href: "/dashboard/patient",
-    icon: <LayoutDashboard className="h-5 w-5 shrink-0" />,
-  },
-  {
-    label: "Reports",
-    href: "/dashboard/patient/reports",
-    icon: <FileText className="h-5 w-5 shrink-0" />,
-  },
-  {
-    label: "Chat",
-    href: "/dashboard/patient/chat",
-    icon: <MessageSquare className="h-5 w-5 shrink-0" />,
-  },
-  {
-    label: "Nearby Care",
-    href: "/dashboard/patient/nearby",
-    icon: <MapPin className="h-5 w-5 shrink-0" />,
-  },
-];
-
 function OrthoLogo({ open }: { open: boolean }) {
   return (
     <Link
@@ -115,15 +91,16 @@ function OrthoLogo({ open }: { open: boolean }) {
   );
 }
 
-export function AppSidebar({ role, userId }: SidebarProps) {
+export function AppSidebar({ role }: SidebarProps) {
+  const { getToken } = useAuth();
   const [open, setOpen] = useState(false);
   const [chatSessions, setChatSessions] = useState<ChatSessionSummary[]>([]);
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const activeChatId = searchParams.get("chat_id");
   const activeDataMode = searchParams.get(DATA_MODE_QUERY_PARAM);
-  const links = role === "doctor" ? doctorLinks : patientLinks;
-  const chatBaseHref = role === "doctor" ? "/dashboard/doctor/chat" : "/dashboard/patient/chat";
+  const links = doctorLinks;
+  const chatBaseHref = "/dashboard/doctor/chat";
 
   const withDataMode = (href: string) => {
     if (!activeDataMode) {
@@ -139,10 +116,12 @@ export function AppSidebar({ role, userId }: SidebarProps) {
   useEffect(() => {
     const loadSessions = async () => {
       try {
-        const response = await fetch(
-          `${API_BASE_URL}/chat/sessions?actor_id=${encodeURIComponent(userId)}&actor_role=${encodeURIComponent(role)}`,
-          { cache: "no-store" }
-        );
+        const token = await getToken();
+        if (!token) return;
+        const response = await fetch(`${API_BASE_URL}/chat/sessions`, {
+          cache: "no-store",
+          headers: { Authorization: `Bearer ${token}` },
+        });
         if (!response.ok) {
           return;
         }
@@ -166,7 +145,7 @@ export function AppSidebar({ role, userId }: SidebarProps) {
     return () => {
       clearInterval(interval);
     };
-  }, [activeChatId, pathname, role, userId]);
+  }, [activeChatId, getToken, pathname]);
 
   return (
     <Sidebar open={open} setOpen={setOpen}>

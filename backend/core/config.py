@@ -63,6 +63,11 @@ class Settings(BaseSettings):
     secret_key: str = "change-me"
     phi_redaction_enabled: bool = True
     medical_disclaimer_enabled: bool = True
+    clerk_jwt_key: str = ""
+    clerk_issuer: str = ""
+    clerk_authorized_parties: str = "http://localhost:3000"
+    max_request_mb: int = 30
+    max_xray_mb: int = 20
 
     # LangGraph
     max_agent_iterations: int = 10
@@ -165,6 +170,34 @@ class Settings(BaseSettings):
         if fe and fe not in origins:
             origins.append(fe)
         return origins or ["*"]
+
+    @property
+    def clerk_authorized_party_list(self) -> list[str]:
+        return [
+            value.strip().rstrip("/")
+            for value in self.clerk_authorized_parties.split(",")
+            if value.strip()
+        ]
+
+    @property
+    def max_request_bytes(self) -> int:
+        return self.max_request_mb * 1024 * 1024
+
+    @property
+    def max_xray_bytes(self) -> int:
+        return self.max_xray_mb * 1024 * 1024
+
+    def validate_security_configuration(self) -> None:
+        if not self.is_production:
+            return
+        if "*" in self.cors_origins:
+            raise RuntimeError("Production CORS origins must be explicit; wildcard is forbidden.")
+        if not self.clerk_jwt_key.strip() or not self.clerk_issuer.strip():
+            raise RuntimeError("CLERK_JWT_KEY and CLERK_ISSUER are required in production.")
+        if not self.clerk_authorized_party_list:
+            raise RuntimeError("CLERK_AUTHORIZED_PARTIES is required in production.")
+        if not self.mongodb_uri.strip():
+            raise RuntimeError("MONGODB_URI is required in production.")
 
 
 @lru_cache(maxsize=1)

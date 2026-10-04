@@ -2,40 +2,27 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import binascii
 import mimetypes
 import re
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from langchain_core.messages import AIMessage, HumanMessage
 from loguru import logger
 
-from api.schemas.requests import ChatRequest, ChatSessionCreateRequest, DoctorPatientAssignRequest
+from api.schemas.requests import ChatRequest, ChatSessionCreateRequest
 from api.schemas.responses import AgentResponse, ChatMessageRecord, ChatSessionCreateResponse, ChatSessionSummary
+from core.auth import AuthenticatedActor, require_doctor
 from core.config import settings
 from core.exceptions import AgentExecutionError
 from services.chat_store import chat_store
 from services.mongo import mongo_service
 from services.patient_store import patient_store
 from services.storage import storage_service
-from tools.modality.dicom_utils import (
-    dicom_bytes_to_image_data_url,
-    dicom_bytes_to_nifti_file,
-    dicom_series_to_nifti_file,
-    extract_dicom_files_from_zip_bytes,
-    is_dicom,
-    normalize_body_part,
-    normalize_dicom_series,
-    read_dicom_metadata,
-)
 from tools.report.clinician_simple_pdf import generate_clinician_simple_pdf_impl
-from tools.report.comprehensive_pdf import generate_comprehensive_pdf_impl
-from tools.report.patient_pdf import generate_patient_pdf_impl
-from tools.utils import decode_image_base64, strip_data_url
+from tools.utils import validate_xray_base64
 from tools.vision.annotator import annotate_xray_image_impl
 
 
@@ -51,51 +38,10 @@ def _to_iso(value: object) -> str:
 def _classify_attachment(attachment: str | None) -> str:
     if not attachment or not attachment.strip():
         return "none"
-
-    normalized = attachment.strip().lower()
-    if normalized.startswith("data:"):
-        if "application/dicom" in normalized:
-            return "dicom"
-        if normalized.startswith("data:image/"):
-            return "image"
-        try:
-            raw = base64.b64decode(strip_data_url(attachment), validate=False)
-            if is_dicom(raw):
-                return "dicom"
-            if raw.startswith(b"PK"):
-                try:
-                    if extract_dicom_files_from_zip_bytes(raw):
-                        return "dicom"
-                except Exception:
-                    pass
-            decode_image_base64(attachment)
-            return "image"
-        except Exception:
-            return "document_or_other"
-
-    payload = strip_data_url(attachment)
     try:
-        raw = base64.b64decode(payload, validate=False)
-    except (ValueError, binascii.Error):
-        return "document_or_other"
-
-    if is_dicom(raw):
-        return "dicom"
-
-    if raw.startswith(b"%PDF"):
-        return "document_or_other"
-    if raw.startswith(b"PK"):
-        try:
-            if extract_dicom_files_from_zip_bytes(raw):
-                return "dicom"
-        except Exception:
-            pass
-        return "document_or_other"
-
-    try:
-        decode_image_base64(attachment)
+        validate_xray_base64(attachment)
         return "image"
-    except Exception:
+    except ValueError:
         return "document_or_other"
 
 
@@ -126,7 +72,7 @@ def _infer_attachment_suffix(attachment: str, attachment_kind: str, payload: byt
 async def _persist_attachment_for_history(chat_id: str, attachment: str | None) -> str | None:
     if not attachment or not attachment.strip():
         return None
-    if attachment.startswith("/storage/") or re.match(r"^https?://", attachment):
+    if attachment.startswith("chat_attachments/"):
         return attachment
 
     attachment_kind = _classify_attachment(attachment)
@@ -141,25 +87,12 @@ async def _persist_attachment_for_history(chat_id: str, attachment: str | None) 
         filename=f"chat_{chat_id}_{uuid4().hex}{suffix}",
         subdir="chat_attachments",
     )
-    return saved["public_url"]
+    return saved["relative_path"]
 
 
 def _load_storage_attachment_as_data_url(attachment_url: str) -> str | None:
-    prefix = "/storage/"
-    if not attachment_url.startswith(prefix):
-        return None
-
-    relative_path = attachment_url[len(prefix):].strip("/")
-    if not relative_path:
-        return None
-
-    storage_root = settings.resolved_storage_path.resolve()
-    file_path = (storage_root / Path(relative_path)).resolve()
-    try:
-        file_path.relative_to(storage_root)
-    except ValueError:
-        return None
-    if not file_path.is_file():
+    file_path = storage_service.resolve_private_path(attachment_url)
+    if file_path is None or not file_path.is_file():
         return None
 
     mime_type, _ = mimetypes.guess_type(file_path.name)
@@ -171,153 +104,38 @@ def _load_storage_attachment_as_data_url(attachment_url: str) -> str | None:
 
 
 def _normalize_attachments(request: ChatRequest) -> list[str]:
-    attachments = [item for item in (request.attachments or []) if isinstance(item, str) and item.strip()]
-    if attachments:
-        return attachments
     if isinstance(request.attachment, str) and request.attachment.strip():
         return [request.attachment]
     return []
 
 
-def _validate_volumetric_series(
-    *,
-    modality: str | None,
-    metadata: dict[str, Any],
-    volume_info: dict[str, Any],
-) -> str | None:
-    if modality not in {"ct", "mri"}:
-        return None
-
-    spacing = volume_info.get("spacing")
-    slice_thickness = metadata.get("slice_thickness_mm")
-    slice_count = int(volume_info.get("slice_count") or 0)
-
-    spacing_z = None
-    if isinstance(spacing, list) and len(spacing) >= 3:
-        try:
-            spacing_z = float(spacing[2])
-        except Exception:
-            spacing_z = None
-
-    try:
-        nominal_thickness = float(slice_thickness) if slice_thickness is not None else None
-    except Exception:
-        nominal_thickness = None
-
-    if spacing_z is not None and nominal_thickness is not None:
-        if spacing_z > max(5.0, nominal_thickness * 3.0):
-            return (
-                "The uploaded CT/MRI series appears incomplete or has missing slices. "
-                f"Detected z-spacing is {spacing_z:.2f} mm while slice thickness is {nominal_thickness:.2f} mm. "
-                "Please upload the full contiguous DICOM series or a zip exported from the viewer/PACS."
-            )
-
-    if slice_count and slice_count < 8 and spacing_z is not None and spacing_z >= 3.0:
-        return (
-            "The uploaded CT/MRI series is too sparse for reliable 3D analysis. "
-            f"Only {slice_count} slices were assembled with {spacing_z:.2f} mm z-spacing. "
-            "Please upload the full DICOM series instead of a partial selection."
-        )
-
-    return None
-
-
-def _prepare_attachment_inputs(session_id: str, attachments: list[str]) -> dict[str, Any]:
+def _prepare_attachment_inputs(_session_id: str, attachments: list[str]) -> dict[str, Any]:
     attachment = attachments[0] if attachments else None
     attachment_kind = _classify_attachment(attachment)
     prepared: dict[str, Any] = {
         "attachment_kind": attachment_kind,
-        "image_data": attachment if attachment_kind == "image" else None,
+        "image_data": None,
         "volume_path": None,
         "dicom_metadata": None,
-        "modality": None,
+        "modality": "xray" if attachment else None,
         "body_region": None,
         "error_message": None,
     }
 
     if not attachments:
         return prepared
-
-    attachment_kinds = [_classify_attachment(item) for item in attachments]
-    if any(kind != "dicom" for kind in attachment_kinds):
+    if len(attachments) != 1:
+        prepared["error_message"] = "Upload exactly one PNG or JPEG X-ray."
         return prepared
-
-    prepared["attachment_kind"] = "dicom"
-
-    dicom_entries = []
-    for item in attachments:
-        raw_payload = _decode_base64_payload(item)
-        payloads = [raw_payload]
-        if not is_dicom(raw_payload):
-            payloads = extract_dicom_files_from_zip_bytes(raw_payload)
-        for dicom_bytes in payloads:
-            metadata = read_dicom_metadata(dicom_bytes)
-            dicom_entries.append({
-                "attachment": item,
-                "bytes": dicom_bytes,
-                "metadata": metadata,
-            })
-
-    if not dicom_entries:
-        prepared["error_message"] = "The uploaded archive does not contain any readable DICOM files."
+    if attachment_kind != "image" or attachment is None:
+        prepared["error_message"] = "Only deidentified PNG and JPEG X-rays are supported."
         return prepared
-
-    normalized_entries, normalization_info = normalize_dicom_series(
-        [entry["bytes"] for entry in dicom_entries]
-    )
-    dicom_entries = normalized_entries
-
-    first_entry = dicom_entries[0]
-    metadata = first_entry["metadata"]
-    modality = metadata.get("modality")
-    body_region = normalize_body_part(
-        str(metadata.get("body_part_examined") or ""),
-        str(metadata.get("study_description") or ""),
-        str(metadata.get("series_description") or ""),
-    )
-
-    prepared["dicom_metadata"] = metadata
-    prepared["modality"] = modality
-    prepared["body_region"] = body_region
-
-    if modality == "xray":
-        prepared["image_data"] = dicom_bytes_to_image_data_url(first_entry["bytes"])
+    try:
+        validate_xray_base64(attachment)
+    except ValueError as exc:
+        prepared["error_message"] = str(exc)
         return prepared
-
-    if modality in {"ct", "mri"} and len(dicom_entries) < 2:
-        prepared["error_message"] = (
-            "This CT/MRI upload contains only a single DICOM slice. Volumetric analysis requires the full DICOM series, "
-            "so please upload multiple slices from the same study together."
-        )
-        return prepared
-
-    settings.dicom_storage_path.mkdir(parents=True, exist_ok=True)
-    settings.nifti_storage_path.mkdir(parents=True, exist_ok=True)
-    nifti_path = settings.nifti_storage_path / f"{session_id}.nii.gz"
-    if len(dicom_entries) == 1:
-        dicom_path = settings.dicom_storage_path / f"{session_id}.dcm"
-        dicom_path.write_bytes(first_entry["bytes"])
-        volume_path, volume_info = dicom_bytes_to_nifti_file(first_entry["bytes"], str(nifti_path))
-    else:
-        volume_path, volume_info = dicom_series_to_nifti_file(
-            [entry["bytes"] for entry in dicom_entries],
-            str(nifti_path),
-        )
-    volumetric_error = _validate_volumetric_series(
-        modality=modality,
-        metadata=metadata,
-        volume_info=volume_info,
-    )
-    if volumetric_error:
-        prepared["error_message"] = volumetric_error
-        return prepared
-    prepared["volume_path"] = volume_path
-    prepared["dicom_metadata"] = {
-        **metadata,
-        **normalization_info,
-        **volume_info,
-        "slice_count": len(dicom_entries),
-    }
+    prepared["image_data"] = attachment
     return prepared
 
 
@@ -328,7 +146,7 @@ def _extract_latest_image_data(history: list[dict]) -> str | None:
         candidate = item.get("attachment_data_url")
         if not isinstance(candidate, str) or not candidate.strip():
             continue
-        if candidate.startswith("/storage/"):
+        if candidate.startswith(("/storage/", "chat_attachments/")):
             restored = _load_storage_attachment_as_data_url(candidate)
             if restored:
                 return restored
@@ -389,8 +207,6 @@ def _extract_patient_info(history: list[dict], current_message: str, patient_id:
         flags=re.IGNORECASE,
     )
 
-    if name_match:
-        info["name"] = name_match.group(1).strip().rstrip(",")
     if age_match:
         try:
             info["age"] = int(age_match.group(1))
@@ -404,9 +220,6 @@ def _extract_patient_info(history: list[dict], current_message: str, patient_id:
             info["gender"] = "Female"
         else:
             info["gender"] = raw_gender.title()
-    if doctor_match:
-        info["doctor"] = doctor_match.group(1).strip()
-
     return info
 
 
@@ -474,13 +287,6 @@ def _chat_timeout_seconds(*, volume_path: str | None, modality: str | None) -> i
     return base_timeout
 
 
-def _normalize_role(role: str) -> str:
-    value = role.strip().lower()
-    if value not in {"doctor", "patient"}:
-        raise HTTPException(status_code=400, detail="actor_role must be 'doctor' or 'patient'.")
-    return value
-
-
 def _report_requested(text: str) -> bool:
     lowered = text.lower()
     return any(keyword in lowered for keyword in ("report", "pdf", "document"))
@@ -523,10 +329,10 @@ async def _ensure_report(
     image_base64: str | None,
     detections: list[dict] | None,
     annotated_image_base64: str | None,
-    treatment_plan: dict | None = None,
-    rehabilitation_plan: dict | None = None,
-    patient_education: dict | None = None,
-    appointment_schedule: dict | None = None,
+    treatment_plan: dict | None = None,  # noqa: ARG001
+    rehabilitation_plan: dict | None = None,  # noqa: ARG001
+    patient_education: dict | None = None,  # noqa: ARG001
+    appointment_schedule: dict | None = None,  # noqa: ARG001
 ) -> tuple[str | None, str | None]:
     if not report_requested:
         return None, None
@@ -546,27 +352,21 @@ async def _ensure_report(
             str(triage.get("recommended_timeframe") or "Follow clinical protocol for this triage level."),
             "Review the annotated image alongside the patient history.",
         ]
-        payload = await generate_comprehensive_pdf_impl(
+        payload = await generate_clinician_simple_pdf_impl(
             diagnosis=diagnosis,
             triage=triage,
-            patient_info=patient_info,
-            actor_role=actor_role,
+            metadata={
+                "patient_id": str(patient_info.get("patient_id") or "unknown"),
+                "patient_name": str(patient_info.get("name") or "Deidentified case"),
+                "patient_age": str(patient_info.get("age") or "Not recorded"),
+                "patient_gender": str(patient_info.get("gender") or "Not recorded"),
+                "doctor_name": str(patient_info.get("doctor") or "Clinician"),
+                "body_part": str(patient_info.get("body_part") or ""),
+            },
             image_base64=image_base64,
             annotated_image_base64=annotated_image_base64,
             detections=detections,
             recommendations=recs,
-            metadata={
-                "patient_id":     str(patient_info.get("patient_id") or "unknown"),
-                "patient_name":   str(patient_info.get("name")   or ""),
-                "patient_age":    str(patient_info.get("age")    or ""),
-                "patient_gender": str(patient_info.get("gender") or ""),
-                "doctor_name":    str(patient_info.get("doctor") or ""),
-                "body_part":      str(patient_info.get("body_part") or ""),
-            },
-            treatment_plan=treatment_plan,
-            rehabilitation_plan=rehabilitation_plan,
-            patient_education=patient_education,
-            appointment_schedule=appointment_schedule,
         )
         if payload.get("error"):
             return None, str(payload["error"])
@@ -579,62 +379,64 @@ async def _ensure_report(
         return None, f"Report generation failed: {exc}"
 
 
-async def _ensure_session_access(chat_id: str, actor_id: str, actor_role: str) -> dict:
+async def _ensure_session_access(chat_id: str, doctor_id: str) -> dict:
     session = await chat_store.get_session(chat_id)
     if not session:
         raise HTTPException(status_code=404, detail="Chat session not found.")
 
-    if actor_role == "patient":
-        if session.get("patient_id") != actor_id:
-            raise HTTPException(status_code=403, detail="Patient is not allowed to access this chat.")
-    else:
-        if session.get("doctor_id") != actor_id:
-            raise HTTPException(status_code=403, detail="Doctor is not allowed to access this chat.")
-        patient_id = str(session.get("patient_id") or "")
-        if patient_id and patient_id != actor_id and not await chat_store.is_patient_assigned(actor_id, patient_id):
-            raise HTTPException(status_code=403, detail="Doctor is not assigned to this patient.")
+    if session.get("doctor_id") != doctor_id:
+        raise HTTPException(status_code=403, detail="Doctor is not allowed to access this chat.")
 
     return session
 
 
-@router.post("/chat/assignments")
-async def assign_patient(request: DoctorPatientAssignRequest) -> dict:
-    await chat_store.assign_patient_to_doctor(request.doctor_id, request.patient_id)
-    return {"status": "ok"}
-
-
 @router.post("/chat/sessions", response_model=ChatSessionCreateResponse)
-async def create_chat_session(request: ChatSessionCreateRequest) -> ChatSessionCreateResponse:
-    actor_role = _normalize_role(request.actor_role)
+async def create_chat_session(
+    request: ChatSessionCreateRequest,
+    actor: AuthenticatedActor = Depends(require_doctor),
+) -> ChatSessionCreateResponse:
     chat_id = str(uuid4())
 
-    if actor_role == "patient":
-        patient_id = request.patient_id or request.actor_id
-        doctor_id = None
+    if request.patient_id:
+        patient = await patient_store.get_patient(request.patient_id, actor.user_id)
+        if not patient:
+            raise HTTPException(status_code=404, detail="Case not found.")
     else:
-        if request.patient_id:
-            if not await chat_store.is_patient_assigned(request.actor_id, request.patient_id):
-                raise HTTPException(status_code=403, detail="Doctor is not assigned to this patient.")
-            patient_id = request.patient_id
-        else:
-            patient_id = request.actor_id
-        doctor_id = request.actor_id
+        case_code = f"CASE-{uuid4().hex[:8].upper()}"
+        patient = await patient_store.upsert_patient(
+            name=case_code,
+            doctor_user_id=actor.user_id,
+            chat_id=chat_id,
+        )
+    patient_id = str(patient["patient_id"])
+    case_code = str(patient.get("name") or patient_id)
 
-    title = (request.title or "New Chat").strip()[:80] or "New Chat"
+    title = (request.title or case_code).strip()[:80] or case_code
     await chat_store.create_session(
         chat_id=chat_id,
-        actor_id=request.actor_id,
-        actor_role=actor_role,
+        actor_id=actor.user_id,
+        actor_role="doctor",
         patient_id=patient_id,
-        doctor_id=doctor_id,
+        doctor_id=actor.user_id,
         title=title,
+    )
+    await chat_store.save_pipeline_state(
+        chat_id,
+        {
+            "mongo_patient_id": patient_id,
+            "patient_info": {
+                "patient_id": patient_id,
+                "name": case_code,
+                "doctor": actor.display_name,
+            },
+            "pending_report_actor_role": None,
+        },
     )
 
     # ── Inject intake greeting so the first thing the user sees is a request
     #    for patient details — used for report generation and analysis.
-    clean_name = (request.actor_name or "").strip()
-    if clean_name.startswith("user_") or not any(c.isalpha() for c in clean_name):
-        clean_name = ""
+    actor_role = "doctor"
+    clean_name = actor.display_name
 
     if actor_role == "doctor":
         salutation = f"Hello, Dr. {clean_name}!" if clean_name else "Hello, Doctor!"
@@ -648,6 +450,11 @@ async def create_chat_session(request: ChatSessionCreateRequest) -> ChatSessionC
             "You can type them in one message, e.g.:\n"
             "> *Name: John Smith, Age: 45, Gender: Male*\n\n"
             "Once you share those, upload an X-ray or describe the case and I'll begin the analysis!"
+        )
+        greeting = (
+            f"Case **{case_code}** is ready. Upload one deidentified PNG or JPEG "
+            "hand/wrist or leg/ankle X-ray and add the clinical context. Model output "
+            "is an AI-assisted draft for clinician review, not an autonomous diagnosis."
         )
     else:
         salutation = f"Hello, {clean_name}!" if clean_name else "Hello!"
@@ -679,16 +486,14 @@ async def create_chat_session(request: ChatSessionCreateRequest) -> ChatSessionC
 
 @router.get("/chat/sessions", response_model=list[ChatSessionSummary])
 async def list_chat_sessions(
-    actor_id: str = Query(...),
-    actor_role: str = Query(...),
+    actor: AuthenticatedActor = Depends(require_doctor),
 ) -> list[ChatSessionSummary]:
-    role = _normalize_role(actor_role)
-    sessions = await chat_store.list_sessions(actor_id=actor_id, actor_role=role)
+    sessions = await chat_store.list_sessions(actor_id=actor.user_id, actor_role="doctor")
     return [
         ChatSessionSummary(
             chat_id=row["chat_id"],
             title=row.get("title") or "New Chat",
-            owner_role=row.get("owner_role") or role,
+            owner_role="doctor",
             patient_id=row.get("patient_id") or "",
             doctor_id=row.get("doctor_id"),
             last_message_at=_to_iso(row.get("last_message_at")),
@@ -701,11 +506,9 @@ async def list_chat_sessions(
 @router.get("/chat/sessions/{chat_id}/messages", response_model=list[ChatMessageRecord])
 async def list_chat_messages(
     chat_id: str,
-    actor_id: str = Query(...),
-    actor_role: str = Query(...),
+    actor: AuthenticatedActor = Depends(require_doctor),
 ) -> list[ChatMessageRecord]:
-    role = _normalize_role(actor_role)
-    await _ensure_session_access(chat_id, actor_id, role)
+    await _ensure_session_access(chat_id, actor.user_id)
     messages = await chat_store.get_messages(chat_id)
     return [
         ChatMessageRecord(
@@ -713,7 +516,7 @@ async def list_chat_messages(
             chat_id=row.get("chat_id") or chat_id,
             sender_role=row.get("sender_role") or "assistant",
             content=row.get("content") or "",
-            attachment_data_url=row.get("attachment_data_url"),
+            attachment_data_url=None,
             annotated_image_base64=row.get("annotated_image_base64"),
             agent_trace=row.get("agent_trace") or [],
             created_at=_to_iso(row.get("created_at")),
@@ -725,22 +528,29 @@ async def list_chat_messages(
 @router.get("/chat/sessions/{chat_id}/trace")
 async def get_chat_trace(
     chat_id: str,
-    actor_id: str = Query(...),
-    actor_role: str = Query(...),
+    actor: AuthenticatedActor = Depends(require_doctor),
 ) -> dict:
-    role = _normalize_role(actor_role)
-    await _ensure_session_access(chat_id, actor_id, role)
+    await _ensure_session_access(chat_id, actor.user_id)
     return await chat_store.get_trace(chat_id)
 
 
 @router.post("/chat/sessions/{chat_id}/messages", response_model=AgentResponse)
-async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
+async def chat_in_session(
+    chat_id: str,
+    request: ChatRequest,
+    actor: AuthenticatedActor = Depends(require_doctor),
+) -> AgentResponse:
     from graph.graph import run_agent
 
-    actor_role = _normalize_role(request.actor_role)
-    session = await _ensure_session_access(chat_id, request.actor_id, actor_role)
+    actor_role = "doctor"
+    session = await _ensure_session_access(chat_id, actor.user_id)
 
     attachments = _normalize_attachments(request)
+    if attachments and not request.deidentified_confirmed:
+        raise HTTPException(
+            status_code=400,
+            detail="Confirm that the X-ray is deidentified before uploading.",
+        )
     attachment = attachments[0] if attachments else None
     message = request.message
     attachment_inputs = _prepare_attachment_inputs(chat_id, attachments)
@@ -770,7 +580,11 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
         )
 
     user_message_id = str(uuid4())
-    persisted_attachment = await _persist_attachment_for_history(chat_id, attachment)
+    persisted_attachment = (
+        await _persist_attachment_for_history(chat_id, attachment)
+        if attachment and not attachment_error_message
+        else None
+    )
     await chat_store.append_message(
         chat_id=chat_id,
         message_id=user_message_id,
@@ -798,10 +612,10 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
     patient_info = _extract_patient_info(
         history=history_before,
         current_message=message,
-        patient_id=str(session.get("patient_id") or request.patient_id or request.actor_id),
+        patient_id=str(session.get("patient_id") or request.patient_id or ""),
     )
     # For doctor role, inject actor_name as the referring doctor (only if it looks like a real name)
-    clean_actor_name = (request.actor_name or "").strip()
+    clean_actor_name = actor.display_name.strip()
     # Reject Clerk user-IDs (e.g. "user_2vXyz...") — they are not display names
     if clean_actor_name.startswith("user_") or not any(c.isalpha() for c in clean_actor_name):
         clean_actor_name = ""
@@ -875,8 +689,8 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
                 name=_pi_name,
                 age=int(_pi_age) if _pi_age is not None else None,
                 gender=_pi_gender,
-                doctor_user_id=request.actor_id if actor_role == "doctor" else None,
-                patient_user_id=request.actor_id if actor_role == "patient" else None,
+                doctor_user_id=actor.user_id,
+                patient_user_id=None,
                 chat_id=chat_id,
                 existing_patient_id=_existing_mongo_patient_id,
             )
@@ -1031,8 +845,8 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
                 name=str(best_pi["name"]),
                 age=int(best_pi["age"]) if best_pi.get("age") is not None else None,
                 gender=str(best_pi.get("gender") or ""),
-                doctor_user_id=request.actor_id if actor_role == "doctor" else None,
-                patient_user_id=request.actor_id if actor_role == "patient" else None,
+                doctor_user_id=actor.user_id,
+                patient_user_id=None,
                 chat_id=chat_id,
                 existing_patient_id=_existing_mongo_patient_id,
             )
@@ -1097,30 +911,39 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
             logger.info("chat_id={} report generated via direct fallback", chat_id)
 
     # ── Save report to MongoDB when PDF was generated ─────────────────────────
-    if report_url and mongo_service.enabled:
+    report_file = storage_service.resolve_private_path(report_url)
+    if report_url and report_file and report_file.is_file() and mongo_service.enabled:
         try:
             _rpt_patient_id = str(
                 best_pi.get("patient_id")
                 or new_pipeline.get("mongo_patient_id")
                 or _existing_mongo_patient_id
                 or session.get("patient_id")
-                or request.actor_id
+                or actor.user_id
             )
             _rpt_name = str(best_pi.get("name") or "Unknown")
             _rpt_severity = str((result.get("triage_result") or {}).get("level") or "GREEN")
             _rpt_body = str(result.get("body_part") or "").capitalize()
             _rpt_title = f"{_rpt_body} X-ray Analysis Report".strip() if _rpt_body else "Orthopedic Analysis Report"
-            await patient_store.save_report(
+            saved_report = await patient_store.save_report(
                 patient_id=_rpt_patient_id,
                 patient_name=_rpt_name,
                 pdf_url=report_url,
+                pdf_path=report_file.relative_to(storage_service.root).as_posix(),
                 title=_rpt_title,
                 severity=_rpt_severity,
-                doctor_user_id=request.actor_id if actor_role == "doctor" else None,
+                doctor_user_id=actor.user_id,
             )
+            report_url = str(saved_report["pdf_url"])
+            result["report_url"] = report_url
             logger.info("chat_id={} report saved to MongoDB patient_id={}", chat_id, _rpt_patient_id)
         except Exception as _re:
             logger.warning("chat_id={} report MongoDB save failed: {}", chat_id, _re)
+            report_url = None
+            report_error = "The draft PDF could not be registered for private download."
+    elif report_url and not str(report_url).startswith("/api/reports/"):
+        report_url = None
+        report_error = "Private report storage is unavailable."
 
     if report_url:
         try:
@@ -1128,8 +951,9 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
         except Exception:
             pass
 
-    if report_url and report_url not in final_response:
-        final_response = f"{final_response}\n\nReport: {report_url}"
+    final_response = re.sub(r"\n*Report:\s*\S+", "", final_response).rstrip()
+    if report_url:
+        final_response = f"{final_response}\n\nDraft report: {report_url}"
     elif report_requested_this_turn and report_error:
         final_response = f"{final_response}\n\n{report_error}"
 
@@ -1155,110 +979,3 @@ async def chat_in_session(chat_id: str, request: ChatRequest) -> AgentResponse:
         annotated_image_base64=annotated_image_base64,
         agent_trace=trace,
     )
-
-
-@router.post("/chat", response_model=AgentResponse)
-async def chat_with_agent(request: ChatRequest) -> AgentResponse:
-    actor_role = _normalize_role(request.actor_role)
-    chat_id = request.session_id
-
-    if not chat_id:
-        if actor_role == "patient":
-            patient_id = request.patient_id or request.actor_id
-            doctor_id = None
-        else:
-            if request.patient_id:
-                if not await chat_store.is_patient_assigned(request.actor_id, request.patient_id):
-                    raise HTTPException(status_code=403, detail="Doctor is not assigned to this patient.")
-                patient_id = request.patient_id
-            else:
-                patient_id = request.actor_id
-            doctor_id = request.actor_id
-
-        title_source = request.message.strip() or "New Chat"
-        chat_id = str(uuid4())
-        await chat_store.create_session(
-            chat_id=chat_id,
-            actor_id=request.actor_id,
-            actor_role=actor_role,
-            patient_id=patient_id,
-            doctor_id=doctor_id,
-            title=title_source[:80],
-        )
-
-    bridged = ChatRequest(
-        actor_id=request.actor_id,
-        actor_role=actor_role,
-        actor_name=request.actor_name,
-        message=request.message,
-        session_id=chat_id,
-        attachment=request.attachment,
-        attachments=request.attachments,
-        patient_id=request.patient_id,
-        location=request.location,
-    )
-    return await chat_in_session(chat_id, bridged)
-
-
-@router.get("/chat/patients")
-async def list_patients(
-    actor_id: str = Query(...),
-    actor_role: str = Query(...),
-) -> list[dict[str, Any]]:
-    """Derive a patient list from chat sessions + pipeline state."""
-    role = _normalize_role(actor_role)
-    sessions = await chat_store.list_sessions(actor_id=actor_id, actor_role=role)
-
-    seen: dict[str, dict[str, Any]] = {}
-    for session in sessions:
-        pid = session.get("patient_id") or ""
-        if not pid or pid == actor_id:
-            continue
-
-        pipeline_info: dict[str, Any] = {}
-        for key in ("pipeline_patient_info", "pipeline_triage_result", "pipeline_body_part", "pipeline_diagnosis"):
-            val = session.get(key)
-            if val:
-                pipeline_info[key] = val
-
-        patient_info = pipeline_info.get("pipeline_patient_info") or {}
-        triage = pipeline_info.get("pipeline_triage_result") or {}
-        diagnosis = pipeline_info.get("pipeline_diagnosis") or {}
-
-        triage_level = str(triage.get("triage_level") or triage.get("urgency_level") or "").upper()
-        risk = "GREEN"
-        if triage_level in ("RED", "HIGH", "URGENT", "EMERGENCY"):
-            risk = "RED"
-        elif triage_level in ("AMBER", "MEDIUM", "MODERATE"):
-            risk = "AMBER"
-
-        name = str(patient_info.get("name") or patient_info.get("patient_name") or pid)
-        age = patient_info.get("age")
-        summary_text = str(diagnosis.get("summary") or diagnosis.get("description") or triage.get("recommendation") or "")
-
-        last_msg = session.get("last_message_at")
-        last_study = _to_iso(last_msg) if last_msg else ""
-
-        if pid not in seen:
-            seen[pid] = {
-                "id": pid,
-                "name": name,
-                "age": int(age) if age is not None and str(age).isdigit() else 0,
-                "riskLevel": risk,
-                "summary": summary_text or "No summary available yet.",
-                "lastStudy": last_study[:10] if last_study else "",
-            }
-        else:
-            existing = seen[pid]
-            if name != pid and existing["name"] == pid:
-                existing["name"] = name
-            if age and not existing["age"]:
-                existing["age"] = int(age) if str(age).isdigit() else 0
-            if risk == "RED" or (risk == "AMBER" and existing["riskLevel"] == "GREEN"):
-                existing["riskLevel"] = risk
-            if summary_text and existing["summary"] == "No summary available yet.":
-                existing["summary"] = summary_text
-            if last_study and last_study > existing["lastStudy"]:
-                existing["lastStudy"] = last_study[:10]
-
-    return list(seen.values())

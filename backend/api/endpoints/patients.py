@@ -4,10 +4,12 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from loguru import logger
 
+from core.auth import AuthenticatedActor, require_doctor
 from services.patient_store import patient_store
+from services.storage import storage_service
 
 router = APIRouter(tags=["patients"])
 
@@ -46,18 +48,10 @@ def _latest_analysis_summary(analyses: list[dict]) -> tuple[str, str]:
 
 @router.get("/patients")
 async def list_patients(
-    actor_id: str = Query(..., description="Clerk user ID"),
-    actor_role: str = Query(..., description="doctor or patient"),
+    actor: AuthenticatedActor = Depends(require_doctor),
 ) -> list[dict[str, Any]]:
-    role = actor_role.strip().lower()
-    if role not in ("doctor", "patient"):
-        raise HTTPException(status_code=400, detail="actor_role must be 'doctor' or 'patient'.")
-
     try:
-        if role == "doctor":
-            raw = await patient_store.list_by_doctor(actor_id, include_analyses=True)
-        else:
-            raw = await patient_store.list_by_patient_user(actor_id, include_analyses=True)
+        raw = await patient_store.list_by_doctor(actor.user_id, include_analyses=True)
     except RuntimeError as exc:
         logger.warning("patients list: MongoDB not available — {}", exc)
         return []
@@ -83,13 +77,18 @@ async def list_patients(
 
 
 @router.get("/patients/{patient_id}")
-async def get_patient(patient_id: str) -> dict[str, Any]:
+async def get_patient(
+    patient_id: str,
+    actor: AuthenticatedActor = Depends(require_doctor),
+) -> dict[str, Any]:
     try:
         patient = await patient_store.get_patient(patient_id)
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found.")
+    if patient.get("doctor_user_id") != actor.user_id:
+        raise HTTPException(status_code=403, detail="Case belongs to another doctor.")
     patient.pop("_id", None)
     return patient
 
@@ -97,18 +96,18 @@ async def get_patient(patient_id: str) -> dict[str, Any]:
 @router.delete("/patients/{patient_id}")
 async def delete_patient(
     patient_id: str,
-    actor_id: str = Query(..., description="Clerk user ID"),
-    actor_role: str = Query(..., description="doctor or patient"),
+    actor: AuthenticatedActor = Depends(require_doctor),
 ) -> dict[str, Any]:
-    role = actor_role.strip().lower()
-    if role not in ("doctor", "patient"):
-        raise HTTPException(status_code=400, detail="actor_role must be 'doctor' or 'patient'.")
-
     try:
+        patient = await patient_store.get_patient(patient_id)
+        if not patient:
+            raise HTTPException(status_code=404, detail="Patient not found.")
+        if patient.get("doctor_user_id") != actor.user_id:
+            raise HTTPException(status_code=403, detail="Case belongs to another doctor.")
         result = await patient_store.delete_patient(
             patient_id=patient_id,
-            actor_id=actor_id,
-            actor_role=role,
+            actor_id=actor.user_id,
+            actor_role="doctor",
         )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
@@ -116,6 +115,17 @@ async def delete_patient(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if int(result.get("deleted_patients", 0)) == 0:
-        raise HTTPException(status_code=404, detail="Patient not found or not permitted.")
+        raise HTTPException(status_code=404, detail="Patient not found.")
 
-    return {"status": "ok", **result}
+    file_references = result.pop("file_references", [])
+    deleted_files = 0
+    for reference in file_references:
+        if await storage_service.delete_reference(reference):
+            deleted_files += 1
+        path = storage_service.resolve_private_path(reference)
+        if path and path.suffix.lower() == ".pdf":
+            report_json = f"reports/{path.stem}.json"
+            if await storage_service.delete_reference(report_json):
+                deleted_files += 1
+
+    return {"status": "ok", **result, "deleted_files": deleted_files}

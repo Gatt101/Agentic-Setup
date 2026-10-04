@@ -7,6 +7,7 @@ import {
 } from "@/components/ai-elements/message";
 import type { AgentTraceStep, ChatAttachment } from "@/hooks/useChat";
 import { cn } from "@/lib/utils";
+import { SecureReportDownload } from "@/components/reports/SecureReportDownload";
 
 import { AttachmentPreview } from "./AttachmentPreview";
 
@@ -23,16 +24,10 @@ type MessageBubbleProps = {
  * Handles both absolute (https://...) and relative (/storage/...) URLs. */
 function extractReportUrl(text: string): { body: string; reportUrl: string | null } {
   // Match both absolute URLs (https://...) and relative paths (/storage/...)
-  const match = text.match(/\n\nReport:\s*((?:https?:\/\/|\/)\S+)\s*$/);
+  const match = text.match(/\n\n(?:Draft report|Report):\s*((?:https?:\/\/|\/)\S+)\s*$/i);
   if (!match) return { body: text, reportUrl: null };
-  let url = match[1];
+  const url = match[1];
   // Relative path — prepend the backend origin so the browser fetches from the API server
-  if (url.startsWith('/')) {
-    const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8000/api';
-    // Strip the /api suffix to get the bare origin (e.g. http://localhost:8000)
-    const origin = apiBase.replace(/\/api\/?$/, '');
-    url = `${origin}${url}`;
-  }
   return { body: text.slice(0, match.index), reportUrl: url };
 }
 
@@ -72,20 +67,10 @@ export function MessageBubble({ attachment, content, role, trace }: MessageBubbl
             )
           ) : null}
           {reportUrl ? (
-            <a
-              href={reportUrl}
-              target="_blank"
-              rel="noopener noreferrer"
+            <SecureReportDownload
               className="mt-3 flex w-fit items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-700 transition-colors hover:bg-blue-100 dark:border-blue-700 dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-900/50"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-                <polyline points="14 2 14 8 20 8"/>
-                <line x1="12" y1="18" x2="12" y2="12"/>
-                <line x1="9" y1="15" x2="15" y2="15"/>
-              </svg>
-              Download Report (PDF)
-            </a>
+              reportUrl={reportUrl}
+            />
           ) : null}
           {attachment ? <AttachmentPreview attachment={attachment} /> : null}
           {role === "assistant" && Array.isArray(trace) && trace.length > 0 ? (

@@ -1,12 +1,9 @@
 import { auth } from "@clerk/nextjs/server";
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
-import { ROLE_COOKIE_NAME, ROLE_SELECTION_ROUTE } from "../../lib/constants";
+import { DASHBOARD_ROUTES, ROLE_SELECTION_ROUTE } from "../../lib/constants";
 import {
-  dashboardPathForRole,
   getRoleFromSessionClaims,
-  parseRole,
 } from "../../lib/rbac";
 
 export default async function DashboardIndexPage() {
@@ -19,13 +16,11 @@ export default async function DashboardIndexPage() {
   const role = getRoleFromSessionClaims(
     sessionClaims as Record<string, unknown> | undefined
   );
-  const cookieStore = await cookies();
-  const cookieRole = parseRole(cookieStore.get(ROLE_COOKIE_NAME)?.value);
-  const resolvedRole = role ?? cookieRole;
+  const resolvedRole = role;
 
-  if (!resolvedRole) {
+  if (resolvedRole !== "doctor") {
     redirect(ROLE_SELECTION_ROUTE);
   }
 
-  redirect(dashboardPathForRole(resolvedRole));
+  redirect(DASHBOARD_ROUTES.doctor);
 }

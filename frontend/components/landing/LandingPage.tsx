@@ -50,23 +50,23 @@ type AudienceCard = {
 
 const workflowSteps: WorkflowStep[] = [
   {
-    detail: "DICOM, image, and PDF ready",
+    detail: "One deidentified PNG or JPEG",
     description:
-      "Add studies quickly with structured intake so each case starts with the right context.",
+      "Create a case code, upload a supported X-ray, and add the clinical context without patient identifiers.",
     icon: XrayIcon,
     title: "Upload Imaging",
   },
   {
-    detail: "Explainable clinical summaries",
+    detail: "Hand/wrist and leg/ankle pilot scope",
     description:
-      "Receive concise findings, severity context, and triage-ready signals in one focused view.",
+      "Review research-grade YOLO observations alongside the image and clinical history.",
     icon: BoneIcon,
     title: "Get Structured Insight",
   },
   {
-    detail: "Reports and care direction",
+    detail: "Clinician review required",
     description:
-      "Generate patient-friendly reports and route urgent cases toward nearby orthopedic care.",
+      "Prepare a structured physician draft and patient-friendly handout without autonomous sign-off.",
     icon: ReportIcon,
     title: "Generate Action",
   },
@@ -86,41 +86,41 @@ const audienceCards: AudienceCard[] = [
   },
   {
     bullets: [
-      "Plain-language report explanations",
-      "Clear urgency guidance and next steps",
-      "Nearby orthopedic care suggestions",
+      "Plain-language draft explanations",
+      "Shared by the treating clinician",
+      "No direct patient login in the pilot",
     ],
     description:
-      "Accessible communication that helps patients understand what they should do next.",
-    icon: HospitalIcon,
-    title: "For Patients",
+      "Patient communication stays under the clinic's review and delivery process.",
+    icon: ReportIcon,
+    title: "For Patient Communication",
   },
 ];
 
 const trustBullets = [
-  "Privacy-first handling of medical data and uploads",
-  "Explainable outputs designed for clinical review",
-  "Clinical disclaimer pathways for high-risk scenarios",
-  "Structured audit trail support for operational teams",
+  "Deidentified pilot cases only",
+  "Private authenticated report delivery",
+  "Research-grade output designed for clinician review",
+  "Not for emergency use or autonomous diagnosis",
 ];
 
 const sectionNavLinks: SectionNavLink[] = [
   { href: "#workflow", label: "Workflow" },
-  { href: "#audience", label: "Doctors & Patients" },
+  { href: "#audience", label: "Clinician Use" },
   { href: "#trust", label: "Trust & Safety" },
   { href: "#start", label: "Get Started" },
 ];
 
 const outcomeMetrics: OutcomeMetric[] = [
-  { label: "Case Intake", value: "Under 2 min" },
-  { label: "Clinical Summary", value: "Structured output" },
-  { label: "Audience Modes", value: "Doctor + Patient" },
-  { label: "Workflow Fit", value: "Ortho-first" },
+  { label: "Supported Images", value: "PNG + JPEG" },
+  { label: "Body Regions", value: "Hand + Leg" },
+  { label: "Review", value: "Clinician required" },
+  { label: "Pilot Data", value: "Deidentified only" },
 ];
 
 const productLinks = [
   { href: "#workflow", label: "Workflow" },
-  { href: "#audience", label: "Doctor & Patient Roles" },
+  { href: "#audience", label: "Clinician Workflow" },
   { href: "#trust", label: "Trust & Safety" },
 ];
 
@@ -325,7 +325,7 @@ function LandingFooter() {
               OrthoAssist
             </p>
             <p className="mt-3 text-sm leading-relaxed text-slate-600 dark:text-slate-300">
-              Clinical workflow software for orthopedic imaging review, structured insights, and patient-friendly communication.
+              Doctor-reviewed orthopedic X-ray drafts for deidentified clinic workflows.
             </p>
           </div>
 
@@ -367,7 +367,7 @@ function LandingFooter() {
         </div>
 
         <div className="mt-8 border-slate-200 border-t pt-4 text-xs text-slate-500 dark:border-slate-800 dark:text-slate-400">
-          <p>2026 OrthoAssist. Clinical decision support software for orthopedic workflows.</p>
+          <p>2026 OrthoAssist. For clinician review only. Not for emergency use or autonomous diagnosis.</p>
         </div>
       </div>
     </footer>
@@ -399,19 +399,14 @@ export function LandingPage() {
               transition={{ duration: 0.5, ease: "easeOut" }}
             >
               <p className="w-fit rounded-full border border-[var(--color-primary)]/30 bg-[var(--color-primary)]/8 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--color-primary)] mb-6">
-                Orthopedic Clinical AI
+                Clinician-reviewed pilot
               </p>
               <h1 className="landing-heading-font text-4xl leading-tight text-slate-900 sm:text-5xl md:text-7xl dark:text-slate-100">
-                OrthoAssist
-                <span className="mt-2 block text-[var(--color-primary)]">
-                  AI-Powered Orthopedic{" "}
-                  <br className="hidden md:block" />
-                  Clinical Platform
-                </span>
+                Doctor-reviewed orthopedic X-ray reports, drafted faster.
               </h1>
               <p className="mt-6 max-w-2xl text-base leading-relaxed text-slate-600 sm:text-lg md:text-xl dark:text-slate-300">
-                Analyze X-rays, generate structured reports, and guide orthopedic
-                care with clarity and clinical confidence.
+                Upload a deidentified hand/wrist or leg/ankle X-ray, add clinical
+                context, and review an AI-assisted structured report.
               </p>
               <div className="mt-8 flex flex-wrap items-center gap-3">
                 <SignUpButton forceRedirectUrl="/select-role" mode="redirect">
@@ -419,7 +414,7 @@ export function LandingPage() {
                     className="h-11 rounded-xl px-6 text-sm font-semibold !bg-[var(--color-primary)] !text-white hover:!bg-[#445188]"
                     type="button"
                   >
-                    Get Started
+                    Request pilot access
                   </Button>
                 </SignUpButton>
                 <SignInButton forceRedirectUrl="/select-role" mode="redirect">
@@ -438,16 +433,16 @@ export function LandingPage() {
                       type="button"
                       variant="outline"
                     >
-                      View Demo
+                      View clinician demo
                     </Button>
                   </DialogTrigger>
                   <DialogContent className="border-slate-200 bg-white/95 sm:max-w-md dark:border-slate-800 dark:bg-slate-950/95">
                     <DialogHeader>
                       <DialogTitle className="text-slate-900 dark:text-slate-100">
-                        Demo Coming Soon
+                        Clinician Demo Coming Soon
                       </DialogTitle>
                       <DialogDescription className="text-slate-600 dark:text-slate-300">
-                        We&apos;ll get a guided OrthoAssist demo to you soon.
+                        We&apos;ll get a guided OrthoAssist clinician demo to you soon.
                       </DialogDescription>
                     </DialogHeader>
                     <DialogFooter>
@@ -469,8 +464,8 @@ export function LandingPage() {
                   <p className="mt-1">Designed around orthopedic clinical flow.</p>
                 </div>
                 <div className="rounded-xl border border-slate-200 bg-white/80 backdrop-blur-sm px-4 py-3 text-sm text-slate-700 dark:border-slate-700 dark:bg-slate-900/80 dark:text-slate-300">
-                  <p className="font-semibold text-slate-900 dark:text-slate-100">Dual audience</p>
-                  <p className="mt-1">Doctor precision, patient-friendly output.</p>
+                  <p className="font-semibold text-slate-900 dark:text-slate-100">Clear boundary</p>
+                  <p className="mt-1">No emergency use or autonomous diagnosis.</p>
                 </div>
               </div>
             </motion.div>
@@ -494,8 +489,8 @@ export function LandingPage() {
       >
         <SectionIntro
           eyebrow="Clinical Workflow"
-          subtitle="OrthoAssist keeps orthopedic teams on a clear path from image intake to decision-ready output."
-          title="From X-ray to Actionable Insight"
+          subtitle="A narrow pilot workflow for deidentified hand/wrist and leg/ankle X-rays."
+          title="From X-ray to Clinician-Reviewed Draft"
         />
         <div className="mt-10 grid gap-4 md:grid-cols-3">
           {workflowSteps.map((step, index) => (
@@ -540,9 +535,9 @@ export function LandingPage() {
         whileInView={{ opacity: 1, y: 0 }}
       >
         <SectionIntro
-          eyebrow="Role-Aware Experience"
-          subtitle="A shared platform with role-specific workflows for clinical teams and patient communication."
-          title="Built for Doctors, Accessible for Patients"
+          eyebrow="Clinician Workflow"
+          subtitle="The doctor remains responsible for interpretation, edits, approval, and patient communication."
+          title="Built for the Treating Clinician"
         />
         <div className="mt-10 grid gap-4 lg:grid-cols-2">
           {audienceCards.map((card, index) => (
@@ -625,10 +620,10 @@ export function LandingPage() {
       >
         <div className="rounded-3xl border border-slate-200 bg-[linear-gradient(135deg,#f1f4ff_0%,#f6faf8_45%,#fff7e6_100%)] px-6 py-10 text-center sm:px-10 sm:py-12 dark:border-slate-700 dark:bg-[linear-gradient(135deg,#171e37_0%,#132228_45%,#2e2516_100%)]">
           <h2 className="landing-heading-font text-3xl text-slate-900 sm:text-4xl dark:text-slate-100">
-            Ready to bring clinical-grade orthopedic support to your workflow?
+            Ready to evaluate a focused orthopedic reporting workflow?
           </h2>
           <p className="mx-auto mt-4 max-w-2xl text-sm leading-relaxed text-slate-600 sm:text-base dark:text-slate-300">
-            Start with OrthoAssist and move from fragmented case handling to consistent, decision-ready orthopedic workflows.
+            Use deidentified pilot cases to measure report quality, editing effort, and workflow time.
           </p>
           <div className="mt-7 flex flex-wrap items-center justify-center gap-3">
             <SignUpButton forceRedirectUrl="/select-role" mode="redirect">

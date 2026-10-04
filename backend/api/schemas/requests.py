@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AnalyzeRequest(BaseModel):
@@ -17,28 +17,21 @@ class AnalyzeRequest(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    actor_id: str
-    actor_role: str = "patient"
-    actor_name: str | None = None  # display name from Clerk, used in PDF doctor field
+    model_config = ConfigDict(extra="forbid")
+
     message: str
     session_id: str | None = None
     attachment: str | None = None
-    attachments: list[str] | None = None
+    deidentified_confirmed: bool = False
     patient_id: str | None = None
     location: str | None = None
 
 
 class ChatSessionCreateRequest(BaseModel):
-    actor_id: str
-    actor_role: str = "patient"
-    actor_name: str | None = None  # display name used in the greeting
+    model_config = ConfigDict(extra="forbid")
+
     patient_id: str | None = None
     title: str | None = None
-
-
-class DoctorPatientAssignRequest(BaseModel):
-    doctor_id: str
-    patient_id: str
 
 
 class KnowledgeDocumentIngestRequest(BaseModel):
@@ -46,12 +39,6 @@ class KnowledgeDocumentIngestRequest(BaseModel):
     content: str
     source: str = "manual"
     patient_id: str | None = None
-
-
-class ReportSaveRequest(BaseModel):
-    report_data: dict
-    patient_id: str
-    report_type: str = "manual"
 
 
 class ReportRetrieveRequest(BaseModel):

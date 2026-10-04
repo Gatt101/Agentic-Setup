@@ -2,6 +2,7 @@
 
 import { Button } from "@/components/ui/button";
 import type { PatientRecord } from "@/lib/data/types";
+import { useAuth } from "@clerk/nextjs";
 import { useMemo, useState } from "react";
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api";
@@ -15,11 +16,11 @@ const riskClassName: Record<"AMBER" | "GREEN" | "RED", string> = {
 };
 
 type DoctorPatientsPanelProps = {
-  actorId: string;
   initialPatients: PatientRecord[];
 };
 
-export function DoctorPatientsPanel({ actorId, initialPatients }: DoctorPatientsPanelProps) {
+export function DoctorPatientsPanel({ initialPatients }: DoctorPatientsPanelProps) {
+  const { getToken } = useAuth();
   const [patients, setPatients] = useState<PatientRecord[]>(initialPatients);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -28,7 +29,7 @@ export function DoctorPatientsPanel({ actorId, initialPatients }: DoctorPatients
 
   const onDeletePatient = async (patient: PatientRecord) => {
     const confirmed = window.confirm(
-      `Delete patient "${patient.name}" (${patient.id})?\n\nThis will remove the patient record and linked reports.`
+      `Delete case "${patient.name}" (${patient.id})?\n\nThis removes the case, linked reports, and stored files.`
     );
     if (!confirmed || deletingId) {
       return;
@@ -37,14 +38,13 @@ export function DoctorPatientsPanel({ actorId, initialPatients }: DoctorPatients
     setDeletingId(patient.id);
     setError(null);
     try {
-      const params = new URLSearchParams({ actor_id: actorId, actor_role: "doctor" });
-      const response = await fetch(
-        `${API_BASE_URL}/patients/${encodeURIComponent(patient.id)}?${params.toString()}`,
-        {
-          method: "DELETE",
-          cache: "no-store",
-        }
-      );
+      const token = await getToken();
+      if (!token) throw new Error("Authentication required.");
+      const response = await fetch(`${API_BASE_URL}/patients/${encodeURIComponent(patient.id)}`, {
+        method: "DELETE",
+        cache: "no-store",
+        headers: { Authorization: `Bearer ${token}` },
+      });
       if (!response.ok) {
         let message = "Failed to delete patient.";
         try {
@@ -76,7 +76,7 @@ export function DoctorPatientsPanel({ actorId, initialPatients }: DoctorPatients
 
       {!hasPatients ? (
         <div className="rounded-xl border border-slate-200 bg-white p-5 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-300">
-          No patients available.
+          No deidentified cases available.
         </div>
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
@@ -113,7 +113,7 @@ export function DoctorPatientsPanel({ actorId, initialPatients }: DoctorPatients
                   disabled={deletingId === patient.id}
                   onClick={() => void onDeletePatient(patient)}
                 >
-                  {deletingId === patient.id ? "Deleting..." : "Delete Patient"}
+                  {deletingId === patient.id ? "Deleting..." : "Delete Case"}
                 </Button>
               </div>
             </article>

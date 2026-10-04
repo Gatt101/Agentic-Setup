@@ -3,9 +3,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends
 from loguru import logger
 
+from core.auth import AuthenticatedActor, require_doctor
 from services.patient_store import patient_store
 
 router = APIRouter(tags=["dashboard"])
@@ -75,13 +76,8 @@ def _format_vs_previous(current: int, previous: int) -> str:
 
 @router.get("/dashboard/doctor/overview")
 async def get_doctor_dashboard_overview(
-    actor_id: str = Query(..., description="Clerk user ID for doctor"),
-    actor_role: str = Query("doctor", description="Expected role: doctor"),
+    actor: AuthenticatedActor = Depends(require_doctor),
 ) -> dict[str, Any]:
-    role = actor_role.strip().lower()
-    if role != "doctor":
-        raise HTTPException(status_code=400, detail="actor_role must be 'doctor'.")
-
     now = datetime.now(UTC)
     month_starts = _recent_month_starts(now, count=6)
     month_keys = [f"{m.year}-{m.month:02d}" for m in month_starts]
@@ -99,8 +95,8 @@ async def get_doctor_dashboard_overview(
     total_analyses = 0
 
     try:
-        patients = await patient_store.list_by_doctor(actor_id, include_analyses=True)
-        reports = await patient_store.list_reports_by_doctor(actor_id)
+        patients = await patient_store.list_by_doctor(actor.user_id, include_analyses=True)
+        reports = await patient_store.list_reports_by_doctor(actor.user_id)
     except RuntimeError as exc:
         logger.warning("doctor dashboard overview unavailable (mongo): {}", exc)
         return {

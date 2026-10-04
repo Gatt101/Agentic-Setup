@@ -1,5 +1,6 @@
 import { getDoctorReports } from "@/lib/data/loaders";
 import { DATA_MODE_QUERY_PARAM, resolveDataSourceMode } from "@/lib/data/mode";
+import { SecureReportDownload } from "@/components/reports/SecureReportDownload";
 import { auth } from "@clerk/nextjs/server";
 
 const severityClassName: Record<"AMBER" | "GREEN" | "RED", string> = {
@@ -19,8 +20,9 @@ export default async function DoctorReportsPage({
 }) {
   const params = searchParams ? await searchParams : {};
   const mode = resolveDataSourceMode(params[DATA_MODE_QUERY_PARAM]);
-  const { userId } = await auth();
-  const reports = await getDoctorReports(userId ?? undefined, { mode });
+  const { getToken, userId } = await auth();
+  const token = await getToken();
+  const reports = await getDoctorReports(userId ?? undefined, { mode, token });
 
   return (
     <main className="space-y-4 p-6">
@@ -77,13 +79,11 @@ export default async function DoctorReportsPage({
                 </td>
                 <td className="px-4 py-3">
                   {report.pdfUrl ? (
-                    <a
-                      className="rounded-md bg-blue-600 px-3 py-1 text-xs font-semibold text-white hover:bg-blue-700"
-                      download
-                      href={`${process.env.NEXT_PUBLIC_API_BASE_URL?.replace("/api", "") ?? "http://localhost:8000"}${report.pdfUrl}`}
-                    >
-                      Download
-                    </a>
+                    <SecureReportDownload
+                      className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                      label="Download"
+                      reportUrl={report.pdfUrl}
+                    />
                   ) : (
                     <span className="text-xs text-slate-400">—</span>
                   )}

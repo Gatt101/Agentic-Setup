@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from loguru import logger
 
-from api.schemas.requests import ReportSaveRequest
-from api.schemas.responses import ReportRetrieveResponse, ReportSaveResponse
+from api.schemas.responses import ReportRetrieveResponse
+from core.auth import AuthenticatedActor, require_doctor
 from core.exceptions import StorageError
 from services.patient_store import patient_store
 from services.storage import storage_service
@@ -15,35 +17,25 @@ from services.storage import storage_service
 router = APIRouter(tags=["reports"])
 
 
-@router.post("/reports", response_model=ReportSaveResponse)
-async def save_report(request: ReportSaveRequest) -> ReportSaveResponse:
-    result = await storage_service.save_report(
-        report_data=request.report_data,
-        patient_id=request.patient_id,
-        report_type=request.report_type,
-    )
-    return ReportSaveResponse(**result)
+async def _get_owned_report(report_id: str, doctor_id: str) -> dict[str, Any]:
+    try:
+        report = await patient_store.get_report(report_id)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found.")
+    if report.get("doctor_user_id") != doctor_id:
+        raise HTTPException(status_code=403, detail="Report belongs to another doctor.")
+    return report
 
 
 @router.get("/reports/list")
 async def list_reports(
-    actor_id: str = Query(..., description="Clerk user ID"),
-    actor_role: str = Query(..., description="doctor or patient"),
-    patient_id: str | None = Query(None),
+    actor: AuthenticatedActor = Depends(require_doctor),
 ) -> list[dict[str, Any]]:
     """List reports from MongoDB for the current user."""
-    role = actor_role.strip().lower()
-    if role not in ("doctor", "patient"):
-        raise HTTPException(status_code=400, detail="actor_role must be 'doctor' or 'patient'.")
-
     try:
-        if role == "doctor":
-            raw = await patient_store.list_reports_by_doctor(actor_id)
-        else:
-            # For patient role, find their patient record first then list reports
-            raw_patients = await patient_store.list_by_patient_user(actor_id)
-            resolved_pid = patient_id or (raw_patients[0].get("patient_id") if raw_patients else None)
-            raw = await patient_store.list_reports_by_patient_id(resolved_pid) if resolved_pid else []
+        raw = await patient_store.list_reports_by_doctor(actor.user_id)
     except RuntimeError as exc:
         logger.warning("reports list: MongoDB not available — {}", exc)
         return []
@@ -56,8 +48,8 @@ async def list_reports(
                 "patientName": r.get("patient_name") or "Unknown",
                 "title": r.get("title") or "Orthopedic Report",
                 "severity": r.get("severity") or "GREEN",
-                "status": r.get("status") or "finalized",
-                "pdfUrl": r.get("pdf_url"),
+                "status": r.get("status") or "draft",
+                "pdfUrl": f"/api/reports/{r.get('report_id')}/pdf" if r.get("report_id") else None,
                 "createdAt": r["created_at"].isoformat() if hasattr(r.get("created_at"), "isoformat") else str(r.get("created_at") or ""),
             }
         )
@@ -65,14 +57,42 @@ async def list_reports(
 
 
 @router.get("/reports/{report_id}", response_model=ReportRetrieveResponse)
-async def get_report(report_id: str) -> ReportRetrieveResponse:
+async def get_report(
+    report_id: str,
+    actor: AuthenticatedActor = Depends(require_doctor),
+) -> ReportRetrieveResponse:
+    report = await _get_owned_report(report_id, actor.user_id)
+
+    reference = report.get("pdf_path") or report.get("pdf_url")
+    report_path = storage_service.resolve_private_path(reference)
+    source_id = report_path.stem if report_path else report_id
     try:
-        payload = await storage_service.retrieve_report(report_id)
+        payload = await storage_service.retrieve_report(source_id)
     except StorageError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        logger.warning("report metadata unavailable for {}: {}", report_id, exc)
+        payload = {"report_data": report}
 
     return ReportRetrieveResponse(
         report_data=payload.get("report_data", {}),
-        pdf_url=payload.get("pdf_url"),
-        created_at=payload.get("created_at"),
+        pdf_url=f"/api/reports/{report_id}/pdf",
+        created_at=str(payload.get("created_at") or report.get("created_at") or ""),
+    )
+
+
+@router.get("/reports/{report_id}/pdf")
+async def download_report_pdf(
+    report_id: str,
+    actor: AuthenticatedActor = Depends(require_doctor),
+) -> FileResponse:
+    report = await _get_owned_report(report_id, actor.user_id)
+
+    reference = report.get("pdf_path") or report.get("pdf_url")
+    path = storage_service.resolve_private_path(reference)
+    if path is None or not path.is_file() or path.suffix.lower() != ".pdf":
+        raise HTTPException(status_code=404, detail="Report file not found.")
+
+    return FileResponse(
+        path=path,
+        media_type="application/pdf",
+        filename=f"{Path(report_id).name}.pdf",
     )

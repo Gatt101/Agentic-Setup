@@ -73,10 +73,8 @@ def should_continue(state: AgentState) -> str:
         }
     )
 
-    # When clinical pipeline is complete, run care-plan agents before responding
+    # The pilot stops after diagnosis/triage; care-plan agents are intentionally deferred.
     if diagnosis and triage:
-        if not state.get("care_plan_generated"):
-            return "care_plan_node"
         if not _report_requested(state):
             return "response_builder"
         if report_url:

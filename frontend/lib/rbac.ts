@@ -25,8 +25,6 @@ function extractRoleFromRecord(record: Record<string, unknown>): AppRole | null 
     "metadata",
     "publicMetadata",
     "public_metadata",
-    "unsafeMetadata",
-    "unsafe_metadata",
   ] as const;
 
   for (const key of metadataKeys) {
@@ -39,7 +37,7 @@ function extractRoleFromRecord(record: Record<string, unknown>): AppRole | null 
       return metadata.role;
     }
 
-    const nestedKeys = ["public", "unsafe"] as const;
+    const nestedKeys = ["public"] as const;
     for (const nestedKey of nestedKeys) {
       const nestedMetadata = metadata[nestedKey];
       if (!isRecord(nestedMetadata)) {

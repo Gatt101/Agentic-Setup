@@ -3,27 +3,11 @@ import { NextResponse } from "next/server";
 
 import {
   DASHBOARD_ROUTES,
-  ROLE_COOKIE_NAME,
   ROLE_SELECTION_ROUTE,
-  type AppRole,
 } from "./lib/constants";
 import {
-  dashboardPathForRole,
   getRoleFromSessionClaims,
-  parseRole,
 } from "./lib/rbac";
-
-function resolveRole(
-  claims: Record<string, unknown> | undefined,
-  cookieRole: string | undefined
-): AppRole | null {
-  const claimsRole = getRoleFromSessionClaims(claims);
-  if (claimsRole) {
-    return claimsRole;
-  }
-
-  return parseRole(cookieRole);
-}
 
 function redirectToRoleSelection(req: Request): NextResponse {
   return NextResponse.redirect(new URL(ROLE_SELECTION_ROUTE, req.url));
@@ -43,37 +27,16 @@ export default clerkMiddleware(async (auth, req) => {
     return authObject.redirectToSignIn();
   }
 
-  const cookieRole = req.cookies.get(ROLE_COOKIE_NAME)?.value;
-
-  const resolvedRole = resolveRole(
-    authObject.sessionClaims as Record<string, unknown> | undefined,
-    cookieRole
+  const resolvedRole = getRoleFromSessionClaims(
+    authObject.sessionClaims as Record<string, unknown> | undefined
   );
 
-  if (!resolvedRole) {
+  if (resolvedRole !== "doctor") {
     return redirectToRoleSelection(req);
   }
 
-  if (pathname === "/dashboard") {
-    return NextResponse.redirect(new URL(dashboardPathForRole(resolvedRole), req.url));
-  }
-
-  if (
-    pathname.startsWith(DASHBOARD_ROUTES.doctor) &&
-    resolvedRole !== "doctor"
-  ) {
-    return NextResponse.redirect(
-      new URL(dashboardPathForRole(resolvedRole), req.url)
-    );
-  }
-
-  if (
-    pathname.startsWith(DASHBOARD_ROUTES.patient) &&
-    resolvedRole !== "patient"
-  ) {
-    return NextResponse.redirect(
-      new URL(dashboardPathForRole(resolvedRole), req.url)
-    );
+  if (pathname === "/dashboard" || pathname.startsWith(DASHBOARD_ROUTES.patient)) {
+    return NextResponse.redirect(new URL(DASHBOARD_ROUTES.doctor, req.url));
   }
 
   return NextResponse.next();
